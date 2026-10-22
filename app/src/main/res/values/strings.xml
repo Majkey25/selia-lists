@@ -6,6 +6,7 @@
     <string name="no_pdfs">No PDFs yet</string>
     <string name="import_hint">Import a PDF to start.</string>
     <string name="import_pdf">Import PDF</string>
+    <string name="confirm_incoming_pdfs">Add shared PDF files to your library? Files: %1$d</string>
     <string name="menu">Menu</string>
     <string name="create">Create</string>
     <string name="files">Files</string>
@@ -43,6 +44,8 @@
     <string name="choose_pdfs">Choose PDFs from your library.</string>
     <string name="import_first">Import PDFs in the PDF tab first.</string>
     <string name="action_failed">The action could not be completed.</string>
+    <string name="annotation_limit_reached">This change exceeds the annotation complexity limit. Existing annotations were kept.</string>
+    <string name="pdf_export_limit_reached">This PDF exceeds the safe export size for the available memory. Export a smaller document. The original was kept.</string>
     <string name="close">Close</string>
     <string name="export">Export</string>
     <string name="annotate">Annotate</string>

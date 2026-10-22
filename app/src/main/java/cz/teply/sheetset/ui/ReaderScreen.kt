@@ -85,6 +85,7 @@ import cz.teply.sheetset.pdf.ShapeAnnotation
 import cz.teply.sheetset.pdf.SymbolAnnotation
 import cz.teply.sheetset.pdf.TextBoxAnnotation
 import cz.teply.sheetset.pdf.canAppendAnnotations
+import cz.teply.sheetset.pdf.AnnotationLimitException
 import cz.teply.sheetset.pdf.duplicateSelection
 import cz.teply.sheetset.pdf.manualMarkup
 import cz.teply.sheetset.pdf.annotationWidthLevel
@@ -188,6 +189,7 @@ fun ReaderScreen(
         reader.score.pageCount,
     )
     val actionFailed = stringResource(R.string.action_failed)
+    val annotationLimit = stringResource(R.string.annotation_limit_reached)
 
     LaunchedEffect(settings.editor) {
         editorState.replace(settings.editor)
@@ -210,22 +212,26 @@ fun ReaderScreen(
         }
     }
 
-    fun updateHistory(next: AnnotationHistory) {
-        if (next == history) return
-        history = next
-        actions.saveAnnotations(
-            reader.score.id,
-            reader.pageIndex,
-            reader.annotations.withPage(reader.pageIndex, next.annotations),
-        )
+    fun updateHistory(change: () -> AnnotationHistory): Boolean {
+        try {
+            val next = change()
+            if (next == history) return true
+            val annotations = reader.annotations.withPage(reader.pageIndex, next.annotations)
+            actions.saveAnnotations(reader.score.id, reader.pageIndex, annotations)
+            history = next
+            return true
+        } catch (_: AnnotationLimitException) {
+            Toast.makeText(platformView.context, annotationLimit, Toast.LENGTH_LONG).show()
+            return false
+        }
     }
 
-    fun addAnnotation(annotation: PageAnnotation) {
+    fun addAnnotation(annotation: PageAnnotation): Boolean {
         if (!canAppendAnnotations(history.annotations.size, 1)) {
-            Toast.makeText(platformView.context, actionFailed, Toast.LENGTH_SHORT).show()
-            return
+            Toast.makeText(platformView.context, annotationLimit, Toast.LENGTH_LONG).show()
+            return false
         }
-        updateHistory(history.add(annotation))
+        return updateHistory { history.add(annotation) }
     }
 
     fun updateEditor(transform: (AnnotationEditorSettings) -> AnnotationEditorSettings) {
@@ -255,7 +261,7 @@ fun ReaderScreen(
                     annotation
                 }
             }
-            updateHistory(history.commit(next))
+            updateHistory { history.commit(next) }
             if (addRecent) {
                 saveRecentColor(color)
             }
@@ -288,7 +294,7 @@ fun ReaderScreen(
             val next = history.annotations.map { annotation ->
                 if (annotation.id in selectedAnnotationIds) annotation.withToolbarWidth(width) else annotation
             }
-            updateHistory(history.commit(next))
+            updateHistory { history.commit(next) }
         } else if (group == AnnotationToolGroup.DRAW) {
             updatePreset { it.copy(width = width) }
         } else {
@@ -378,11 +384,11 @@ fun ReaderScreen(
                     }
                 }
                 view.onSelectionChange = { selectedAnnotationIds = it }
-                view.onAddAnnotation = ::addAnnotation
-                view.onUpdateAnnotations = { updateHistory(history.commit(it)) }
+                view.onAddAnnotation = { addAnnotation(it) }
+                view.onUpdateAnnotations = { updateHistory { history.commit(it) } }
                 view.onDeleteAnnotations = { ids ->
                     selectedAnnotationIds = selectedAnnotationIds - ids
-                    updateHistory(history.commit(history.annotations.filterNot { it.id in ids }))
+                    updateHistory { history.commit(history.annotations.filterNot { it.id in ids }) }
                 }
                 view.onRequestText = { bounds ->
                     editingTextId = null
@@ -512,7 +518,7 @@ fun ReaderScreen(
                         if (!canAppendAnnotations(before.size, selectedCount)) {
                             Toast.makeText(
                                 platformView.context,
-                                actionFailed,
+                                annotationLimit,
                                 Toast.LENGTH_SHORT,
                             ).show()
                             return@duplicate
@@ -520,24 +526,25 @@ fun ReaderScreen(
                         val duplicated = before.duplicateSelection(selectedAnnotationIds) {
                             UUID.randomUUID().toString()
                         }
-                        selectedAnnotationIds = duplicated.drop(before.size)
-                            .mapTo(mutableSetOf(), PageAnnotation::id)
-                        updateHistory(history.commit(duplicated))
+                        if (updateHistory { history.commit(duplicated) }) {
+                            selectedAnnotationIds = duplicated.drop(before.size)
+                                .mapTo(mutableSetOf(), PageAnnotation::id)
+                        }
                     },
                     onDelete = {
                         if (selectedAnnotationIds.isNotEmpty()) {
                             val ids = selectedAnnotationIds
                             selectedAnnotationIds = emptySet()
-                            updateHistory(history.commit(history.annotations.filterNot { it.id in ids }))
+                            updateHistory { history.commit(history.annotations.filterNot { it.id in ids }) }
                         }
                     },
                     onUndo = {
                         selectedAnnotationIds = emptySet()
-                        updateHistory(history.undo())
+                        updateHistory { history.undo() }
                     },
                     onRedo = {
                         selectedAnnotationIds = emptySet()
-                        updateHistory(history.redo())
+                        updateHistory { history.redo() }
                     },
                     onDone = {
                         selectedAnnotationIds = emptySet()
@@ -615,14 +622,16 @@ fun ReaderScreen(
                     editingTextId = null
                 },
                 onConfirm = { annotation ->
-                    if (editingText == null) {
+                    val saved = if (editingText == null) {
                         addAnnotation(annotation)
                     } else {
-                        updateHistory(history.update(annotation))
+                        updateHistory { history.update(annotation) }
                     }
-                    saveRecentColor(annotation.color)
-                    textBounds = null
-                    editingTextId = null
+                    if (saved) {
+                        saveRecentColor(annotation.color)
+                        textBounds = null
+                        editingTextId = null
+                    }
                 },
             )
         }

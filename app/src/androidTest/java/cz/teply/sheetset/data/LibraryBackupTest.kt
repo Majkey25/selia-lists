@@ -8,8 +8,12 @@ import cz.teply.sheetset.pdf.AnnotationEditorSettings
 import cz.teply.sheetset.pdf.AnnotationJson
 import cz.teply.sheetset.pdf.DocumentAnnotations
 import cz.teply.sheetset.pdf.NormalizedPoint
+import cz.teply.sheetset.pdf.NormalizedRect
+import cz.teply.sheetset.pdf.TextBoxAnnotation
+import cz.teply.sheetset.pdf.MAX_TEXT_LENGTH
 import cz.teply.sheetset.pdf.SymbolAnnotation
 import cz.teply.sheetset.settings.AppSettings
+import cz.teply.sheetset.settings.AnnotationTextSize
 import cz.teply.sheetset.settings.PageFit
 import cz.teply.sheetset.settings.ReaderLayout
 import cz.teply.sheetset.settings.ThemeMode
@@ -22,6 +26,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -48,6 +53,69 @@ class LibraryBackupTest {
         restoreRoot.deleteRecursively()
         File(restoreRoot.parentFile, ".${restoreRoot.name}-previous").deleteRecursively()
         File(restoreRoot.parentFile, ".${restoreRoot.name}-restore").deleteRecursively()
+    }
+
+    @Test
+    fun oversizedSetlistOrAnnotationWorkCannotReplaceExistingLibrary() = runBlocking {
+        val repository = LibraryRepository(restoreRoot)
+        val pdf = createPdf(pages = 1)
+        try {
+            val score = repository.importPdf(
+                PdfImport("Existing.pdf", "application/pdf", pdf.length(), pdf::inputStream),
+            )
+            repository.createSetlist("Original")
+            val before = repository.load()
+            val catalog = JSONObject(CatalogJson.encode(before))
+            catalog.getJSONArray("setlists").getJSONObject(0).put(
+                "scoreIds", JSONArray(List(MAX_SETLIST_ENTRIES + 1) { score.id }),
+            )
+            val annotations = JSONObject(AnnotationJson.encode(DocumentAnnotations(mapOf(
+                0 to listOf(TextBoxAnnotation(
+                    "text", NormalizedRect(0.1f, 0.1f, 0.5f, 0.3f),
+                    "a".repeat(MAX_TEXT_LENGTH), AnnotationTextSize.MEDIUM,
+                )),
+            ))))
+            val text = annotations.getJSONObject("pages").getJSONArray("0").getJSONObject(0)
+            annotations.getJSONObject("pages").put("0", JSONArray().apply {
+                repeat(16) { index -> put(JSONObject(text.toString()).put("id", "text-$index")) }
+            })
+            val archive = ByteArrayOutputStream()
+            repository.createBackup(archive, AppSettings(), null)
+            mapOf(
+                "catalog.json" to catalog.toString(),
+                "annotations/${score.id}.json" to annotations.toString(),
+            ).forEach { (path, payload) ->
+                val malicious = ByteArrayOutputStream()
+                ZipOutputStream(malicious).use { zip ->
+                    var replaced = false
+                    ZipInputStream(ByteArrayInputStream(archive.toByteArray())).use { input ->
+                        while (true) {
+                            val entry = input.nextEntry ?: break
+                            zip.putNextEntry(ZipEntry(entry.name))
+                            if (entry.name == path) {
+                                zip.write(payload.toByteArray(Charsets.UTF_8))
+                                replaced = true
+                            } else {
+                                input.copyTo(zip)
+                            }
+                            zip.closeEntry()
+                        }
+                    }
+                    if (!replaced) {
+                        zip.putNextEntry(ZipEntry(path))
+                        zip.write(payload.toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                    }
+                }
+                assertThrows(BackupException::class.java) {
+                    runBlocking { repository.restoreBackup(ByteArrayInputStream(malicious.toByteArray())) }
+                }
+                assertEquals(before, repository.load())
+                assertEquals(1, validatePdfFile(repository.pdfFile(score)))
+            }
+        } finally {
+            pdf.delete()
+        }
     }
 
     @Test

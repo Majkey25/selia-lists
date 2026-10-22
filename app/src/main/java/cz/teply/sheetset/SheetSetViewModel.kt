@@ -15,6 +15,7 @@ import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.pdf.DocumentAnnotations
 import cz.teply.sheetset.pdf.PageAnnotation
 import cz.teply.sheetset.pdf.PdfExporter
+import cz.teply.sheetset.pdf.PdfExportLimitException
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.AppLanguages
 import cz.teply.sheetset.settings.SettingsStore
@@ -65,6 +66,21 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
 
     fun importPdfs(uris: List<Uri>) = launchAction {
         uris.forEach { uri -> repository.importPdf(pdfImport(uri)) }
+    }
+
+    fun offerIncomingPdfs(uris: List<Uri>) {
+        mutableState.update { if (it.incomingPdfs.isEmpty()) it.copy(incomingPdfs = uris) else it }
+    }
+
+    fun dismissIncomingPdfs() {
+        mutableState.update { it.copy(incomingPdfs = emptyList()) }
+    }
+
+    fun confirmIncomingPdfs(uris: List<Uri>) {
+        // A stale dialog callback must not approve different PDFs.
+        if (state.value.incomingPdfs != uris) return
+        dismissIncomingPdfs()
+        if (uris.isNotEmpty()) importPdfs(uris)
     }
 
     fun createSetlist(name: String) = launchAction { repository.createSetlist(name) }
@@ -220,7 +236,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
                     } catch (error: CancellationException) {
                         throw error
                     } catch (_: Exception) {
-                        mutableState.update { it.copy(error = true) }
+                        mutableState.update { it.copy(error = R.string.action_failed) }
                     }
                 }
             }
@@ -254,7 +270,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
             if (error != null && error !is CancellationException) {
                 viewModelScope.launch {
                     if (annotationSaves.isLatest(scoreId, result)) {
-                        mutableState.update { it.copy(error = true) }
+                        mutableState.update { it.copy(error = R.string.action_failed) }
                     }
                 }
             }
@@ -265,24 +281,25 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         if (restoringBackup) return
         val reader = state.value.reader ?: return
         viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, error = false) }
+            mutableState.update { it.copy(loading = true, error = null) }
             try {
                 withContext(Dispatchers.IO) {
                     val resolver = getApplication<Application>().contentResolver
-                    resolver.openOutputStream(uri, "w")?.use { output ->
-                        PdfExporter.export(
-                            reader.file,
-                            output,
-                            reader.annotations,
-                            symbolTypeface,
-                        )
-                    } ?: throw FileNotFoundException(uri.toString())
+                    PdfExporter.export(
+                        reader.file,
+                        { resolver.openOutputStream(uri, "w") ?: throw FileNotFoundException(uri.toString()) },
+                        reader.annotations,
+                        symbolTypeface,
+                    )
                 }
-                mutableState.update { it.copy(loading = false) }
             } catch (error: CancellationException) {
                 throw error
+            } catch (_: PdfExportLimitException) {
+                mutableState.update { it.copy(error = R.string.pdf_export_limit_reached) }
             } catch (_: Exception) {
-                mutableState.update { it.copy(loading = false, error = true) }
+                mutableState.update { it.copy(error = R.string.action_failed) }
+            } finally {
+                mutableState.update { it.copy(loading = false) }
             }
         }
     }
@@ -290,7 +307,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     fun createBackup(uri: Uri) {
         if (restoringBackup) return
         viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, error = false) }
+            mutableState.update { it.copy(loading = true, error = null) }
             try {
                 val application = getApplication<Application>()
                 annotationSaves.awaitLatest()
@@ -305,7 +322,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                mutableState.update { it.copy(loading = false, error = true) }
+                mutableState.update { it.copy(loading = false, error = R.string.action_failed) }
             }
         }
     }
@@ -313,7 +330,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     fun createSharedBackup(onReady: (Uri) -> Unit) {
         if (restoringBackup) return
         viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, error = false) }
+            mutableState.update { it.copy(loading = true, error = null) }
             val application = getApplication<Application>()
             try {
                 annotationSaves.awaitLatest()
@@ -327,7 +344,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                mutableState.update { it.copy(loading = false, error = true) }
+                mutableState.update { it.copy(loading = false, error = R.string.action_failed) }
             }
         }
     }
@@ -337,7 +354,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         restoringBackup = true
         readerOpenJob?.cancel()
         readerOpenJob = null
-        mutableState.update { it.copy(loading = true, error = false, reader = null) }
+        mutableState.update { it.copy(loading = true, error = null, reader = null) }
         viewModelScope.launch {
             try {
                 libraryMutationMutex.withLock {
@@ -366,7 +383,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                mutableState.update { it.copy(loading = false, error = true) }
+                mutableState.update { it.copy(loading = false, error = R.string.action_failed) }
             } finally {
                 restoringBackup = false
             }
@@ -377,7 +394,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         if (restoringBackup) return
         viewModelScope.launch {
             libraryMutationMutex.withLock {
-                mutableState.update { it.copy(loading = true, error = false) }
+                mutableState.update { it.copy(loading = true, error = null) }
                 try {
                     val failed = try {
                         action()
@@ -407,13 +424,13 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
                             catalog = updatedCatalog,
                             reader = reader,
                             loading = restoringBackup,
-                            error = failed,
+                            error = if (failed) R.string.action_failed else null,
                         )
                     }
                 } catch (error: CancellationException) {
                     throw error
                 } catch (_: Exception) {
-                    mutableState.update { it.copy(loading = restoringBackup, error = true) }
+                    mutableState.update { it.copy(loading = restoringBackup, error = R.string.action_failed) }
                 }
             }
         }
@@ -429,7 +446,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         val scoreId = scoreIds.getOrNull(scoreIndex) ?: return
         readerOpenJob?.cancel()
         readerOpenJob = viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, error = false) }
+            mutableState.update { it.copy(loading = true, error = null) }
             try {
                 val score = state.value.catalog.scores.firstOrNull { it.id == scoreId }
                     ?: throw IllegalArgumentException("Score does not exist")
@@ -467,7 +484,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
-                mutableState.update { it.copy(loading = false, error = true) }
+                mutableState.update { it.copy(loading = false, error = R.string.action_failed) }
             }
         }
     }

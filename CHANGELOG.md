@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## [0.5.0-alpha.14] - 2026-10-22
+
+### Fixed
+
+- Ask before importing PDFs received from another app, and bind approval to the displayed request.
+- Reject excessive setlist entries and annotation work before replacing library data; keep rejected text drafts editable.
+- Check PDF export page and memory budgets before rendering or opening the destination, with cancellation checks between pages.
+- Keep bookmark search rows distinct when score and bookmark IDs contain separators.
+- Exclude private library data from Android cloud backup and device transfer.
+- Preserve all fixes from the published alpha.13 source.
+
 ## [0.5.0-alpha.12] - 2026-10-13
 
 ### Fixed

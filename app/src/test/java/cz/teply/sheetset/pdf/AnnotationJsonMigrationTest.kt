@@ -42,6 +42,30 @@ class AnnotationJsonMigrationTest {
     }
 
     @Test
+    fun aggregateTextLimitsApplyToDecodedPagesAndWholeDocument() {
+        val labels = List(15) { index ->
+            TextBoxAnnotation(
+                "text-$index", NormalizedRect(0.1f, 0.1f, 0.5f, 0.3f),
+                "a".repeat(MAX_TEXT_LENGTH), AnnotationTextSize.MEDIUM,
+            )
+        }
+        val accepted = DocumentAnnotations(mapOf(0 to labels))
+        assertEquals(accepted, AnnotationJson.decode(AnnotationJson.encode(accepted)))
+        val raw = JSONObject(AnnotationJson.encode(accepted))
+        val page = raw.getJSONObject("pages").getJSONArray("0")
+        page.put(JSONObject(page.getJSONObject(0).toString()).put("id", "extra"))
+        assertThrows(AnnotationLimitException::class.java) { AnnotationJson.decode(raw.toString()) }
+
+        val pages = (0 until 15).associateWith { pageIndex ->
+            labels.map { it.copy(id = "$pageIndex-${it.id}") }
+        }
+        val document = DocumentAnnotations(pages)
+        assertThrows(AnnotationLimitException::class.java) {
+            document.withPage(15, labels.map { it.copy(id = "15-${it.id}") })
+        }
+    }
+
+    @Test
     fun versionOneStrokesMigrateWithoutLoss() {
         val legacy = """
             {"version":1,"pages":{"0":[

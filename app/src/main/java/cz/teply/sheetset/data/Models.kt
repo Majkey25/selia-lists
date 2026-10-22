@@ -8,6 +8,8 @@ const val MAX_TITLE_LENGTH = 120
 const val MAX_BOOKMARKS = 1_000
 const val MAX_LABELS = 20
 const val MAX_LABEL_LENGTH = 40
+const val MAX_SETLIST_ENTRIES = 10_000
+const val MAX_CATALOG_SETLIST_ENTRIES = 100_000L
 private const val MAX_SAFE_DOUBLE_INTEGER = 9_007_199_254_740_991.0
 
 internal fun JSONObject.requiredLong(key: String): Long {
@@ -67,12 +69,22 @@ data class Setlist(
     val scoreIds: List<String> = emptyList(),
     val labels: List<String> = emptyList(),
     val createdAtEpochMs: Long = 0,
-)
+) {
+    init {
+        require(scoreIds.size <= MAX_SETLIST_ENTRIES) { "Setlist has too many entries" }
+    }
+}
 
 data class LibraryCatalog(
     val scores: List<Score> = emptyList(),
     val setlists: List<Setlist> = emptyList(),
 ) {
+    init {
+        require(setlists.sumOf { it.scoreIds.size.toLong() } <= MAX_CATALOG_SETLIST_ENTRIES) {
+            "Library has too many setlist entries"
+        }
+    }
+
     fun createSetlist(
         name: String,
         id: String,
@@ -294,6 +306,15 @@ object CatalogJson {
             "Duplicate score file name"
         }
         val setlistsJson = root.getJSONArray("setlists")
+        var totalEntries = 0L
+        repeat(setlistsJson.length()) { index ->
+            val count = setlistsJson.getJSONObject(index).getJSONArray("scoreIds").length()
+            require(count <= MAX_SETLIST_ENTRIES) { "Setlist has too many entries" }
+            totalEntries += count
+            require(totalEntries <= MAX_CATALOG_SETLIST_ENTRIES) {
+                "Library has too many setlist entries"
+            }
+        }
         val setlists = List(setlistsJson.length()) { index ->
             setlistsJson.getJSONObject(index).toSetlist(version)
         }

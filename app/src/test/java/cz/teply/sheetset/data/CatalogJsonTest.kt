@@ -4,8 +4,40 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
+import org.json.JSONArray
 
 class CatalogJsonTest {
+    @Test
+    fun `oversized setlist JSON is rejected without dropping duplicate occurrences`() {
+        val score = Score("s", "Song", "s.pdf", 1, 0L)
+        val catalog = LibraryCatalog(
+            scores = listOf(score),
+            setlists = listOf(Setlist("set", "Show", List(MAX_SETLIST_ENTRIES) { score.id })),
+        )
+        assertEquals(catalog, CatalogJson.decode(CatalogJson.encode(catalog)))
+        val raw = JSONObject(CatalogJson.encode(catalog))
+        raw.getJSONArray("setlists").getJSONObject(0).getJSONArray("scoreIds").put(score.id)
+        assertThrows(IllegalArgumentException::class.java) { CatalogJson.decode(raw.toString()) }
+        assertThrows(IllegalArgumentException::class.java) { catalog.addScoreToSetlist("set", score.id) }
+        assertEquals(MAX_SETLIST_ENTRIES, catalog.setlists.single().scoreIds.size)
+    }
+
+    @Test
+    fun `total occurrence budget applies to decode and catalog mutations`() {
+        val score = Score("s", "Song", "s.pdf", 1, 0L)
+        val catalog = LibraryCatalog(
+            scores = listOf(score),
+            setlists = List(10) { index ->
+                Setlist("set-$index", "Show", List(MAX_SETLIST_ENTRIES) { score.id })
+            } + Setlist("empty", "Empty"),
+        )
+        assertEquals(catalog, CatalogJson.decode(CatalogJson.encode(catalog)))
+        val raw = JSONObject(CatalogJson.encode(catalog))
+        raw.getJSONArray("setlists").getJSONObject(10).put("scoreIds", JSONArray(listOf(score.id)))
+        assertThrows(IllegalArgumentException::class.java) { CatalogJson.decode(raw.toString()) }
+        assertThrows(IllegalArgumentException::class.java) { catalog.addScoreToSetlist("empty", score.id) }
+    }
+
     @Test
     fun `literal catalog JSON is decoded`() {
         val json = """

@@ -30,6 +30,19 @@ class LibraryQueryTest {
     private val catalog = LibraryCatalog(scores = listOf(first, second))
 
     @Test
+    fun `bookmark row keys distinguish delimiters inside IDs`() {
+        val values = LibraryCatalog(scores = listOf(
+            first.copy(id = "a-b", bookmarks = listOf(Bookmark("c", "Match", 0))),
+            second.copy(id = "a", bookmarks = listOf(Bookmark("b-c", "Match", 0))),
+        ))
+
+        val keys = queryScores(values, "Match", LibrarySort.TITLE, SortDirection.ASCENDING)
+            .map(LibraryResult::key)
+
+        assertEquals(2, keys.toSet().size)
+    }
+
+    @Test
     fun `bookmark match keeps direct page target`() {
         assertEquals(
             listOf(LibraryResult.BookmarkResult(first, first.bookmarks.single())),

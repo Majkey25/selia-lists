@@ -13,6 +13,12 @@ enum class SortDirection { ASCENDING, DESCENDING }
 sealed interface LibraryResult {
     val score: Score
 
+    val key: String
+        get() = when (this) {
+            is ScoreResult -> "score-${score.id}"
+            is BookmarkResult -> "bookmark-${score.id.length}:${score.id}${bookmark.id}"
+        }
+
     data class ScoreResult(override val score: Score) : LibraryResult
 
     data class BookmarkResult(

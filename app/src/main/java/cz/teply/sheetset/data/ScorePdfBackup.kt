@@ -36,6 +36,13 @@ internal fun prepareScorePdfImport(
                 ?: throw BackupException("ScorePDF setlist metadata is missing")
             val scoreRecords = ScorePdfHive.readScores(zip.readBounded(scoreEntry, MAX_HIVE_BYTES))
             val setlistRecords = ScorePdfHive.readSetlists(zip.readBounded(setlistEntry, MAX_HIVE_BYTES))
+            require(setlistRecords.all { it.scoreKeys.size <= MAX_SETLIST_ENTRIES }) {
+                "Setlist has too many entries"
+            }
+            require(
+                current.setlists.sumOf { it.scoreIds.size.toLong() } +
+                    setlistRecords.sumOf { it.scoreKeys.size.toLong() } <= MAX_CATALOG_SETLIST_ENTRIES,
+            ) { "Library has too many setlist entries" }
             val pdfEntries = entries.filterValues { entry ->
                 entry.name.endsWith(".pdf", ignoreCase = true)
             }

@@ -66,8 +66,10 @@ The app requests no runtime or sensitive platform permissions. Imported files st
 - Android only.
 - PDF text and vector objects are not edited. Annotations are a separate layer drawn by touch.
 - Underline and strike-through use manual drag bounds. Scanned PDFs have no OCR.
-- Export rasterizes source pages at up to 144 dpi with a 12 MP memory cap.
+- Export rasterizes source pages at up to 144 dpi and 12 MP per page. Before opening the output, it rejects documents over 1,000 pages or a total raster estimate above half the currently available Java heap, including one extra live page bitmap (at most 64 MP). This is an export-only admission limit, not a guarantee against native PDF parser exhaustion; imported originals remain readable and unchanged.
 - Backup restore accepts archives up to 1 GiB. There is no cloud sync.
+- Setlists support 10,000 score occurrences each and 100,000 across the library. Repeated songs remain distinct and ordered; the number of setlists is not capped.
+- Annotation work is limited to 64,000 units per page and 1,000,000 per document: a text box uses 256 units plus its character count, ink uses one plus its point count, markup uses one plus four per rectangle, and other objects use one. Existing per-object limits remain. Restore and edits reject oversized content without truncation or replacing the existing library.
 - Scanning is delegated to the separate SeliaScan app; SeliaLists has no built-in camera scanner.
 - Common page-turn pedals work as keyboards; custom MIDI mappings, audio tools, and a metronome are not included.
 

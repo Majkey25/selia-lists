@@ -7,6 +7,8 @@ import org.json.JSONObject
 const val MAX_ANNOTATIONS_PER_PAGE = 10_000
 const val MAX_POINTS_PER_INK = 4_096
 const val MAX_TEXT_LENGTH = 4_000
+internal const val MAX_PAGE_ANNOTATION_WORK = 64_000L
+internal const val MAX_DOCUMENT_ANNOTATION_WORK = 1_000_000L
 const val LEGACY_HIGHLIGHTER_OPACITY = 105
 const val DEFAULT_ANNOTATION_OPACITY = 255
 val SUPPORTED_SYMBOL_IDS = setOf(
@@ -16,6 +18,26 @@ val SUPPORTED_SYMBOL_IDS = setOf(
 private const val MAX_MARKUP_RECTS = 512
 private const val MAX_ID_LENGTH = 128
 private const val MAX_HISTORY_STEPS = 100
+
+class AnnotationLimitException : IllegalArgumentException("Annotation complexity limit reached")
+
+// Text layout has a fixed cost even for a short label; geometry scales with its points.
+private val PageAnnotation.work: Long
+    get() = when (this) {
+        is TextBoxAnnotation -> 256L + text.length
+        is InkAnnotation -> 1L + points.size
+        is MarkupAnnotation -> 1L + 4L * bounds.size
+        is ShapeAnnotation, is SymbolAnnotation -> 1L
+    }
+
+private fun requireAnnotationBudget(accepted: Boolean) {
+    if (!accepted) throw AnnotationLimitException()
+}
+
+private fun List<PageAnnotation>.checkedWork(): Long {
+    requireAnnotationBudget(size <= MAX_ANNOTATIONS_PER_PAGE)
+    return sumOf { it.work }.also { requireAnnotationBudget(it <= MAX_PAGE_ANNOTATION_WORK) }
+}
 
 fun canAppendAnnotations(currentCount: Int, additionalCount: Int): Boolean =
     currentCount in 0..MAX_ANNOTATIONS_PER_PAGE &&
@@ -186,11 +208,10 @@ data class DocumentAnnotations(
     val pages: Map<Int, List<PageAnnotation>> = emptyMap(),
 ) {
     init {
-        require(pages.all { (page, annotations) ->
-            page >= 0 && annotations.size <= MAX_ANNOTATIONS_PER_PAGE
-        }) { "Invalid page annotations" }
-        val ids = pages.values.flatten().map(PageAnnotation::id)
-        require(ids.size == ids.distinct().size) { "Duplicate annotation ID" }
+        require(pages.keys.all { it >= 0 }) { "Invalid annotation page" }
+        requireAnnotationBudget(pages.values.sumOf { it.checkedWork() } <= MAX_DOCUMENT_ANNOTATION_WORK)
+        val ids = mutableSetOf<String>()
+        require(pages.values.all { page -> page.all { ids.add(it.id) } }) { "Duplicate annotation ID" }
     }
 
     fun withPage(page: Int, annotations: List<PageAnnotation>): DocumentAnnotations {
@@ -210,14 +231,14 @@ data class AnnotationHistory(
     val canRedo: Boolean get() = redoStates.isNotEmpty()
 
     init {
-        require(annotations.size <= MAX_ANNOTATIONS_PER_PAGE) { "Page annotation limit reached" }
+        annotations.checkedWork()
         require(annotations.map(PageAnnotation::id).distinct().size == annotations.size) {
             "Duplicate annotation ID"
         }
     }
 
     fun add(annotation: PageAnnotation): AnnotationHistory {
-        require(annotations.size < MAX_ANNOTATIONS_PER_PAGE) { "Page annotation limit reached" }
+        requireAnnotationBudget(annotations.size < MAX_ANNOTATIONS_PER_PAGE)
         require(annotations.none { it.id == annotation.id }) { "Duplicate annotation ID" }
         return replace(annotations + annotation)
     }
@@ -292,16 +313,33 @@ object AnnotationJson {
 
     fun decode(raw: String): DocumentAnnotations {
         val root = JSONObject(raw)
-        val pages = root.getJSONObject("pages")
-        require(pages.keys().asSequence().map(String::toInt).toSet().size == pages.length()) {
+        val version = root.exactInt("version")
+        require(version in 1..VERSION) { "Unsupported annotation version" }
+        val pagesJson = root.getJSONObject("pages")
+        require(pagesJson.keys().asSequence().map(String::toInt).toSet().size == pagesJson.length()) {
             "Duplicate page index"
         }
-        return when (root.exactInt("version")) {
-            1 -> decodeVersionOne(root)
-            2 -> decodeVersionTwo(root)
-            VERSION -> decodeVersionThree(root)
-            else -> throw IllegalArgumentException("Unsupported annotation version")
+        var documentWork = 0L
+        val pages = pagesJson.keys().asSequence().associate { pageKey ->
+            val page = pageKey.toInt()
+            val annotations = pagesJson.getJSONArray(pageKey)
+            requireAnnotationBudget(annotations.length() <= MAX_ANNOTATIONS_PER_PAGE)
+            var pageWork = 0L
+            page to List(annotations.length()) { index ->
+                val value = annotations.getJSONObject(index)
+                val annotation = when (version) {
+                    1 -> value.toLegacyInk("legacy-$page-$index")
+                    2 -> value.toVersionTwoAnnotation()
+                    else -> value.toVersionThreeAnnotation()
+                }
+                pageWork += annotation.work
+                documentWork += annotation.work
+                requireAnnotationBudget(pageWork <= MAX_PAGE_ANNOTATION_WORK)
+                requireAnnotationBudget(documentWork <= MAX_DOCUMENT_ANNOTATION_WORK)
+                annotation
+            }
         }
+        return DocumentAnnotations(pages)
     }
 
     private fun JSONObject.exactInt(key: String): Int {
@@ -310,42 +348,6 @@ object AnnotationJson {
             "Invalid annotation integer: $key"
         }
         return value.toInt()
-    }
-
-    private fun decodeVersionOne(root: JSONObject): DocumentAnnotations {
-        val pagesJson = root.getJSONObject("pages")
-        val pages = pagesJson.keys().asSequence().associate { pageKey ->
-            val page = pageKey.toInt()
-            val strokes = pagesJson.getJSONArray(pageKey)
-            page to List(strokes.length()) { index ->
-                strokes.getJSONObject(index).toLegacyInk("legacy-$page-$index")
-            }
-        }
-        return DocumentAnnotations(pages)
-    }
-
-    private fun decodeVersionTwo(root: JSONObject): DocumentAnnotations {
-        val pagesJson = root.getJSONObject("pages")
-        val pages = pagesJson.keys().asSequence().associate { pageKey ->
-            val page = pageKey.toInt()
-            val annotations = pagesJson.getJSONArray(pageKey)
-            page to List(annotations.length()) { index ->
-                annotations.getJSONObject(index).toVersionTwoAnnotation()
-            }
-        }
-        return DocumentAnnotations(pages)
-    }
-
-    private fun decodeVersionThree(root: JSONObject): DocumentAnnotations {
-        val pagesJson = root.getJSONObject("pages")
-        val pages = pagesJson.keys().asSequence().associate { pageKey ->
-            val page = pageKey.toInt()
-            val annotations = pagesJson.getJSONArray(pageKey)
-            page to List(annotations.length()) { index ->
-                annotations.getJSONObject(index).toVersionThreeAnnotation()
-            }
-        }
-        return DocumentAnnotations(pages)
     }
 
     private fun PageAnnotation.toJson(): JSONObject = when (this) {
@@ -554,11 +556,15 @@ object AnnotationJson {
 
     private fun NormalizedRect.toJson(): JSONArray = JSONArray(listOf(left, top, right, bottom))
 
-    private fun JSONArray.toPoints(): List<NormalizedPoint> =
-        List(length()) { index -> getJSONArray(index).toPoint() }
+    private fun JSONArray.toPoints(): List<NormalizedPoint> {
+        require(length() in 1..MAX_POINTS_PER_INK) { "Invalid ink point count" }
+        return List(length()) { index -> getJSONArray(index).toPoint() }
+    }
 
-    private fun JSONArray.toRects(): List<NormalizedRect> =
-        List(length()) { index -> getJSONArray(index).toRect() }
+    private fun JSONArray.toRects(): List<NormalizedRect> {
+        require(length() in 1..MAX_MARKUP_RECTS) { "Invalid markup bounds" }
+        return List(length()) { index -> getJSONArray(index).toRect() }
+    }
 
     private fun JSONArray.toPoint(): NormalizedPoint = NormalizedPoint(
         getDouble(0).toFloat(),

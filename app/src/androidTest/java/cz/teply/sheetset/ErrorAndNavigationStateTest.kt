@@ -67,13 +67,13 @@ class ErrorAndNavigationStateTest {
     @Test
     fun errorsAreVisibleInHomeAndReader() {
         showApp()
-        composeRule.runOnIdle { state = state.copy(error = true) }
+        composeRule.runOnIdle { state = state.copy(error = R.string.action_failed) }
         assertErrorVisible()
 
-        composeRule.runOnIdle { state = state.copy(error = false) }
+        composeRule.runOnIdle { state = state.copy(error = null) }
         composeRule.onNodeWithText(score.title).performClick()
         composeRule.onNodeWithContentDescription("Close").assertIsDisplayed()
-        composeRule.runOnIdle { state = state.copy(error = true) }
+        composeRule.runOnIdle { state = state.copy(error = R.string.action_failed) }
 
         assertErrorVisible()
     }
@@ -84,7 +84,7 @@ class ErrorAndNavigationStateTest {
         composeRule.onNodeWithText("Setlists").performClick()
         composeRule.onNodeWithText("Show").performClick()
         composeRule.onNodeWithText("Add PDFs").assertIsDisplayed()
-        composeRule.runOnIdle { state = state.copy(error = true) }
+        composeRule.runOnIdle { state = state.copy(error = R.string.action_failed) }
         assertErrorVisible()
 
         composeRule.runOnIdle { windowLayout = WindowLayout.MEDIUM }

@@ -35,6 +35,7 @@ import androidx.compose.ui.text.AnnotatedString
 import cz.teply.sheetset.data.LibraryCatalog
 import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.pdf.DocumentAnnotations
+import cz.teply.sheetset.pdf.MAX_TEXT_LENGTH
 import cz.teply.sheetset.pdf.NormalizedRect
 import cz.teply.sheetset.pdf.PdfPageView
 import cz.teply.sheetset.pdf.TextBoxAnnotation
@@ -201,6 +202,44 @@ class ReaderWorkflowRegressionTest {
             assertEquals(initial.id, text.id)
             assertEquals(initial.bounds, text.bounds)
             assertEquals("After rotation", text.text)
+        }
+    }
+
+    @Test
+    fun rejectedTextKeepsDraftAndExistingAnnotations() {
+        val existing = List(15) { index ->
+            TextBoxAnnotation(
+                id = "text-$index",
+                bounds = NormalizedRect(0.2f, 0.2f, 0.7f, 0.4f),
+                text = "a".repeat(MAX_TEXT_LENGTH),
+                size = AnnotationTextSize.MEDIUM,
+            )
+        }
+        val annotations = DocumentAnnotations(pages = mapOf(0 to existing))
+        var saves = 0
+        composeRule.setContent {
+            SheetSetTheme {
+                ReaderScreen(
+                    reader().copy(annotations = annotations),
+                    AppSettings(),
+                    WindowLayout.COMPACT,
+                    SheetSetActions(saveAnnotations = { _, _, _ -> saves++ }),
+                )
+            }
+        }
+        composeRule.onNodeWithContentDescription("Annotation").performClick()
+        composeRule.runOnIdle {
+            requireNotNull(findPdfPage(composeRule.activity.window.decorView))
+                .onRequestText(NormalizedRect(0.2f, 0.2f, 0.7f, 0.4f))
+        }
+        composeRule.onNode(hasSetTextAction()).performTextReplacement("Draft remains")
+
+        composeRule.onNodeWithText("Save").performClick()
+
+        composeRule.onNode(hasSetTextAction()).assertIsDisplayed().assertTextContains("Draft remains")
+        composeRule.runOnIdle {
+            assertEquals(0, saves)
+            assertEquals(existing, annotations.pages.getValue(0))
         }
     }
 

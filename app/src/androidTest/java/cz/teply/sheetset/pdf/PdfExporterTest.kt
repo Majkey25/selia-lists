@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
@@ -16,10 +18,17 @@ import cz.teply.sheetset.settings.AnnotationTextSize
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 class PdfExporterTest {
     @Test
@@ -50,7 +59,7 @@ class PdfExporterTest {
     }
 
     @Test
-    fun exportKeepsPreviewTextWrappingAndStrokeWidthsAcrossPageScales() {
+    fun exportKeepsPreviewTextWrappingAndStrokeWidthsAcrossPageScales() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val typeface = requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular))
         val annotations = listOf(
@@ -102,9 +111,7 @@ class PdfExporterTest {
                 val source = createBlankPdf(context, pages = 1, width = width, height = height)
                 val destination = File(context.cacheDir, "scale-export-${UUID.randomUUID()}.pdf")
                 try {
-                    destination.outputStream().use { output ->
-                        PdfExporter.export(source, output, DocumentAnnotations(mapOf(0 to annotations)), typeface)
-                    }
+                    PdfExporter.export(source, destination::outputStream, DocumentAnnotations(mapOf(0 to annotations)), typeface)
                     val exported = renderPdf(destination, preview.width, preview.height)
                     try {
                         for ((name, region) in regions) {
@@ -139,7 +146,7 @@ class PdfExporterTest {
     }
 
     @Test
-    fun exportRendersEveryAnnotationTypeAndPreservesOriginal() {
+    fun exportRendersEveryAnnotationTypeAndPreservesOriginal() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val source = createBlankPdf(context, pages = 2)
         val destination = File(context.cacheDir, "export-${UUID.randomUUID()}.pdf")
@@ -224,14 +231,12 @@ class PdfExporterTest {
             ),
         )
 
-        destination.outputStream().use { output ->
-            PdfExporter.export(
-                source,
-                output,
-                annotations,
-                requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular)),
-            )
-        }
+        PdfExporter.export(
+            source,
+            destination::outputStream,
+            annotations,
+            requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular)),
+        )
 
         assertEquals(beforeHash, source.sha256())
         assertEquals(2, pageCount(destination))
@@ -263,14 +268,108 @@ class PdfExporterTest {
         assertTrue(darkPixelsIn(destination, 180, 320, 270, 400) > 20)
         source.delete()
         destination.delete()
+        Unit
     }
 
-    private fun createBlankPdf(context: Context, pages: Int, width: Int = 300, height: Int = 400): File {
+    @Test
+    fun ordinaryEightPageA4ScoreExportsCompletely() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val source = createBlankPdf(context, pages = 8, width = 595, height = 842, staves = true)
+        val destination = File(context.cacheDir, "export-${UUID.randomUUID()}.pdf")
+        try {
+            val beforeHash = source.sha256()
+            val runtime = Runtime.getRuntime()
+            println("Export heap: max=${runtime.maxMemory()}, used=${runtime.totalMemory() - runtime.freeMemory()}")
+            PdfExporter.export(source, destination::outputStream, DocumentAnnotations(), Typeface.DEFAULT)
+            assertEquals(8, pageCount(destination))
+            assertEquals(beforeHash, source.sha256())
+            assertTrue(darkPixels(destination) > 1_000)
+        } finally {
+            source.delete()
+            destination.delete()
+        }
+    }
+
+    @Test
+    fun pageCountAndRasterBudgetRejectBeforeOpeningDestination() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val sources = listOf(
+            createBlankPdf(context, MAX_EXPORT_PAGES + 1, width = 1, height = 1),
+            createBlankPdf(context, pages = 8, width = 3_000, height = 3_000),
+        )
+        try {
+            sources.forEach { source ->
+                var opened = false
+                val beforeHash = source.sha256()
+                assertThrows(PdfExportLimitException::class.java) {
+                    runBlocking {
+                        PdfExporter.export(
+                            source,
+                            { opened = true; ByteArrayOutputStream() },
+                            DocumentAnnotations(),
+                            Typeface.DEFAULT,
+                        )
+                    }
+                }
+                assertFalse(opened)
+                assertEquals(beforeHash, source.sha256())
+            }
+        } finally {
+            sources.forEach(File::delete)
+        }
+    }
+
+    @Test
+    fun cancellationBeforeWritingLeavesOutputEmptyAndSourceIntact() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val source = createBlankPdf(context, pages = 1)
+        val output = ByteArrayOutputStream()
+        val job = Job()
+        try {
+            val beforeHash = source.sha256()
+            var cancelled = false
+            try {
+                withContext(job) {
+                    PdfExporter.export(
+                        source,
+                        { job.cancel(); output },
+                        DocumentAnnotations(),
+                        Typeface.DEFAULT,
+                    )
+                }
+            } catch (_: CancellationException) {
+                cancelled = true
+            }
+            assertTrue(cancelled)
+            assertEquals(0, output.size())
+            assertEquals(beforeHash, source.sha256())
+        } finally {
+            job.cancel()
+            source.delete()
+        }
+    }
+
+    private fun createBlankPdf(
+        context: Context,
+        pages: Int,
+        width: Int = 300,
+        height: Int = 400,
+        staves: Boolean = false,
+    ): File {
         val file = File(context.cacheDir, "source-${UUID.randomUUID()}.pdf")
         val document = PdfDocument()
         try {
             repeat(pages) { index ->
                 val page = document.startPage(PdfDocument.PageInfo.Builder(width, height, index + 1).create())
+                if (staves) {
+                    val paint = Paint().apply { color = Color.BLACK; strokeWidth = 1f }
+                    repeat(8) { staff ->
+                        repeat(5) { line ->
+                            val y = 60f + staff * 90f + line * 8f
+                            page.canvas.drawLine(40f, y, width - 40f, y, paint)
+                        }
+                    }
+                }
                 document.finishPage(page)
             }
             file.outputStream().use(document::writeTo)

@@ -105,10 +105,10 @@ fun SheetSetApp(
     actions: SheetSetActions,
     windowLayout: WindowLayout = WindowLayout.COMPACT,
 ) {
-    val errorMessage = stringResource(R.string.action_failed)
+    val errorMessage = state.error?.let { stringResource(it) }
     val snackbarHost = remember { SnackbarHostState() }
     LaunchedEffect(state.error) {
-        if (state.error) snackbarHost.showSnackbar(errorMessage)
+        if (errorMessage != null) snackbarHost.showSnackbar(errorMessage)
     }
 
     Box(Modifier.fillMaxSize()) {

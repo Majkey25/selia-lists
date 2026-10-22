@@ -101,7 +101,7 @@ class ViewModelPersistenceTest {
         val firstEdit = original.withPage(0, original.pages.getValue(0) + ink("first"))
         try {
             instrumentation.runOnMainSync { viewModel.saveAnnotations(score.id, 0, firstEdit) }
-            awaitState { it.error }
+            awaitState { it.error != null }
         } finally {
             check(annotationsDirectory.delete())
             check(savedDirectory.renameTo(annotationsDirectory))
@@ -236,7 +236,7 @@ class ViewModelPersistenceTest {
             assertEquals(0, reader.pageIndex)
             assertEquals(0, repository.load().scores.single().lastPageIndex)
             assertEquals(0, viewModel.state.value.catalog.scores.single().lastPageIndex)
-            assertFalse(viewModel.state.value.error)
+            assertEquals(null, viewModel.state.value.error)
         } finally {
             field.set(viewModel, mutex)
         }
@@ -249,7 +249,7 @@ class ViewModelPersistenceTest {
         instrumentation.runOnMainSync {
             viewModel.importPdfs(listOf(Uri.fromFile(valid), Uri.fromFile(malformed)))
         }
-        val failed = awaitState { it.error && !it.loading }
+        val failed = awaitState { it.error != null && !it.loading }
         val committed = repository.load()
         assertEquals(2, committed.scores.size)
         assertEquals(committed, failed.catalog)
@@ -343,7 +343,7 @@ class ViewModelPersistenceTest {
 
         withTimeout(5_000) { oldOpen.join() }
         val restored = awaitState { !it.loading }
-        assertFalse(restored.error)
+        assertEquals(null, restored.error)
         assertNull(restored.reader)
         assertTrue(restored.catalog.setlists.isEmpty())
         assertEquals(score.title, restored.catalog.scores.single().title)

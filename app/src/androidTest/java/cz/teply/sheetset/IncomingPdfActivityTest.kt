@@ -4,7 +4,15 @@ import android.content.Intent
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.os.SystemClock
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.core.content.FileProvider
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -18,12 +26,16 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @Suppress("DEPRECATION")
 @RunWith(AndroidJUnit4::class)
 class IncomingPdfActivityTest {
+    @get:Rule
+    val composeRule = createEmptyComposeRule()
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val createdFiles = mutableListOf<File>()
     private val createdTitles = mutableSetOf<String>()
@@ -49,19 +61,22 @@ class IncomingPdfActivityTest {
     }
 
     @Test
-    fun coldStartImportsPdfExactlyOnceAcrossRecreation() {
+    fun coldStartRequiresConfirmationAndImportsExactlyOnceAcrossRecreation() {
         val (title, uri) = createPdfFixture("cold")
         val activity = startMainActivity(
             pdfIntent(uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
 
-        awaitScoreCount(title, 1)
+        assertScoreCountRemains(title, 0)
         assertFalse(activity.isFinishing)
         assertEquals(Intent.ACTION_MAIN, activity.intent.action)
 
         val recreated = recreate(activity)
 
+        confirmImport()
+        awaitScoreCount(title, 1)
         assertEquals(Intent.ACTION_MAIN, recreated.intent.action)
+        recreate(recreated)
         assertScoreCountRemains(title, 1)
     }
 
@@ -71,6 +86,8 @@ class IncomingPdfActivityTest {
         val activity = startMainActivity(defaultMainIntent())
 
         instrumentation.runOnMainSync { activity.startActivity(pdfIntent(uri)) }
+        assertScoreCountRemains(title, 0)
+        confirmImport()
         awaitScoreCount(title, 1)
         assertFalse(activity.isFinishing)
         assertEquals(Intent.ACTION_MAIN, activity.intent.action)
@@ -84,6 +101,54 @@ class IncomingPdfActivityTest {
         }
         assertCatalogRemains(beforeMalformed)
         assertFalse(recreated.isFinishing)
+    }
+
+    @Test
+    fun cancelledExternalImportLeavesLibraryUnchanged() {
+        val (title, uri) = createPdfFixture("cancelled")
+        val activity = startMainActivity(pdfIntent(uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+        composeRule.onNodeWithText(activity.getString(R.string.cancel)).performClick()
+
+        recreate(activity)
+        assertScoreCountRemains(title, 0)
+    }
+
+    @Test
+    fun anotherIntentCannotReplaceTheImportAwaitingConfirmation() {
+        val (firstTitle, firstUri) = createPdfFixture("pending")
+        val (secondTitle, secondUri) = createPdfFixture("replacement")
+        val activity = startMainActivity(pdfIntent(firstUri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+        instrumentation.runOnMainSync { activity.startActivity(pdfIntent(secondUri)) }
+        confirmImport()
+
+        awaitScoreCount(firstTitle, 1)
+        assertScoreCountRemains(secondTitle, 0)
+    }
+
+    @Test
+    fun staleConfirmationCannotApproveDifferentPdfs() {
+        val (firstTitle, firstUri) = createPdfFixture("stale")
+        val (secondTitle, secondUri) = createPdfFixture("newer")
+        val activity = startMainActivity(pdfIntent(firstUri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+
+        instrumentation.runOnMainSync {
+            val model = ViewModelProvider(activity)[SheetSetViewModel::class.java]
+            val previousRequest = model.state.value.incomingPdfs
+            model.dismissIncomingPdfs()
+            model.offerIncomingPdfs(listOf(secondUri))
+            model.confirmIncomingPdfs(previousRequest)
+            assertEquals(listOf(secondUri), model.state.value.incomingPdfs)
+        }
+
+        assertScoreCountRemains(firstTitle, 0)
+        assertScoreCountRemains(secondTitle, 0)
+    }
+
+    private fun confirmImport() {
+        val text = instrumentation.targetContext.getString(R.string.import_pdf)
+        composeRule.onNode(hasText(text) and hasClickAction() and hasAnyAncestor(isDialog())).performClick()
     }
 
     private fun startMainActivity(intent: Intent): MainActivity {

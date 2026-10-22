@@ -179,12 +179,7 @@ fun LibraryScreen(
             LazyColumn(contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)) {
                 itemsIndexed(
                     visibleResults,
-                    key = { _, result -> when (result) {
-                        is LibraryResult.ScoreResult -> "score-${result.score.id}"
-                        is LibraryResult.BookmarkResult -> {
-                            "bookmark-${result.score.id}-${result.bookmark.id}"
-                        }
-                    } },
+                    key = { _, result -> result.key },
                 ) { index, result ->
                     when (result) {
                         is LibraryResult.ScoreResult -> ScoreRow(

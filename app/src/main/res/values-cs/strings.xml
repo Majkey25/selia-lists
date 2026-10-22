@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="confirm_incoming_pdfs">Přidat sdílené PDF do knihovny? Počet souborů: %1$d</string>
     <string name="app_name">SeliaLists</string>
     <string name="tab_pdf">PDF</string>
     <string name="tab_setlists">Setlisty</string>
@@ -43,6 +44,8 @@
     <string name="choose_pdfs">Vyberte PDF z knihovny.</string>
     <string name="import_first">Nejprve importujte PDF na záložce PDF.</string>
     <string name="action_failed">Akci se nepodařilo dokončit.</string>
+    <string name="annotation_limit_reached">Tato změna překračuje limit složitosti anotací. Dosavadní anotace zůstaly zachovány.</string>
+    <string name="pdf_export_limit_reached">Toto PDF překračuje bezpečnou velikost exportu pro dostupnou paměť. Exportujte menší dokument. Originál zůstal zachován.</string>
     <string name="close">Zavřít</string>
     <string name="export">Exportovat</string>
     <string name="annotate">Anotovat</string>
