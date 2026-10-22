@@ -21,6 +21,10 @@ Use these answers for the SeliaLists `0.5.0-alpha.12` closed-test AAB after arti
 
 Use the verified legal name, address, phone, and account type already stored in the Play developer account. Do not invent or copy those values into the repository.
 
+### Public names in every locale
+
+Use `SeliaLists` for this app and `SeliaScan` for the separate scanner in both English and Czech listing text. Older saved Console descriptions may still call them `SheetSet` and `ScanIt`; correct those display names without changing feature claims. Use the current `selia-lists` repository and website URLs, and keep `com.majkeylab.sheetset` / `com.majkeylab.scanit` as package identifiers. The English and Czech full descriptions below already use the current public names.
+
 ## English listing
 
 ### App name
