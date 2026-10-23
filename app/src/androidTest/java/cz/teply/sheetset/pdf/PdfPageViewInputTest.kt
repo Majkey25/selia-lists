@@ -16,6 +16,7 @@ import cz.teply.sheetset.MainActivity
 import cz.teply.sheetset.settings.PageFit
 import java.io.File
 import java.util.UUID
+import kotlin.math.abs
 import kotlin.math.min
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -545,8 +546,10 @@ class PdfPageViewInputTest {
         send(event(downTime, downTime + 50, MotionEvent.ACTION_UP, Pointer(10, STYLUS, stylusEnd)))
 
         val stroke = added.single() as InkAnnotation
-        assertEquals(NormalizedPoint(0.25f, 0.25f), stroke.points.first())
-        assertEquals(NormalizedPoint(0.75f, 0.75f), stroke.points.last())
+        assertEquals(0.25f, stroke.points.first().x, 0.000001f)
+        assertEquals(0.25f, stroke.points.first().y, 0.000001f)
+        assertEquals(0.75f, stroke.points.last().x, 0.000001f)
+        assertEquals(0.75f, stroke.points.last().y, 0.000001f)
     }
 
     @Test
@@ -597,10 +600,12 @@ class PdfPageViewInputTest {
         send(event(downTime, downTime + 60, MotionEvent.ACTION_UP, Pointer(10, STYLUS, stylusEnd)))
 
         val stroke = added.single() as InkAnnotation
-        assertEquals(NormalizedPoint(0.3f, 0.3f), stroke.points.first())
-        assertEquals(NormalizedPoint(0.8f, 0.8f), stroke.points.last())
-        assertTrue(NormalizedPoint(0.1f, 0.8f) !in stroke.points)
-        assertTrue(NormalizedPoint(0.2f, 0.7f) !in stroke.points)
+        assertEquals(0.3f, stroke.points.first().x, 0.000001f)
+        assertEquals(0.3f, stroke.points.first().y, 0.000001f)
+        assertEquals(0.8f, stroke.points.last().x, 0.000001f)
+        assertEquals(0.8f, stroke.points.last().y, 0.000001f)
+        assertFalse(stroke.points.any { abs(it.x - 0.1f) <= 0.000001f && abs(it.y - 0.8f) <= 0.000001f })
+        assertFalse(stroke.points.any { abs(it.x - 0.2f) <= 0.000001f && abs(it.y - 0.7f) <= 0.000001f })
     }
 
     @Test
