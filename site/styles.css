@@ -10,6 +10,7 @@
 html { scroll-behavior: smooth; }
 body { margin: 0; }
 a { color: inherit; }
+a:focus-visible { outline: 3px solid currentColor; outline-offset: 4px; }
 .skip-link { position: fixed; left: 16px; top: -80px; z-index: 4; padding: 10px 14px; color: #fff; background: #111; }
 .skip-link:focus { top: 16px; }
 
@@ -28,6 +29,7 @@ a { color: inherit; }
 .wordmark { font-size: 22px; font-weight: 750; text-decoration: none; }
 nav { display: flex; gap: 24px; }
 nav a { font-size: 14px; text-underline-offset: 4px; }
+.policy-links { flex-wrap: wrap; gap: 12px 20px; }
 
 main { overflow: hidden; }
 .hero, .proof, .tablet-proof {
@@ -71,6 +73,7 @@ footer { display: flex; justify-content: space-between; gap: 24px; padding: 32px
 .policy h2 { margin-top: 56px; font-size: 32px; letter-spacing: -0.025em; }
 .policy h3 { margin-top: 34px; font-size: 21px; }
 .policy p { color: #333; font-size: 17px; line-height: 1.7; }
+.policy a { overflow-wrap: anywhere; }
 .policy .updated { color: #666; font-size: 14px; }
 .notice { margin: 36px 0; padding: 20px; border: 1px solid #aaa; background: #f7f7f4; line-height: 1.65; }
 
