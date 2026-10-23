@@ -256,11 +256,6 @@ internal fun AnnotationToolbar(
                                 onClick = { onPreset(preset.id) },
                             )
                         }
-                        ToolbarControl(
-                            stringResource(R.string.eraser),
-                            R.drawable.ic_eraser_24,
-                            selected = state.tool == ReaderTool.ERASER,
-                        ) { onTool(ReaderTool.ERASER) }
                     } else {
                         orderedObjectTools(state.editor).forEach { definition ->
                             ToolbarControl(
@@ -270,6 +265,13 @@ internal fun AnnotationToolbar(
                             ) { onTool(definition.tool) }
                         }
                     }
+                }
+                if (state.group == AnnotationToolGroup.DRAW) {
+                    ToolbarControl(
+                        stringResource(R.string.eraser),
+                        R.drawable.ic_eraser_24,
+                        selected = state.tool == ReaderTool.ERASER,
+                    ) { onTool(ReaderTool.ERASER) }
                 }
                 ToolbarControl(
                     stringResource(R.string.undo),

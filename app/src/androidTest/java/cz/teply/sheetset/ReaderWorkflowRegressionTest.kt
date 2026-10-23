@@ -6,9 +6,12 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -32,6 +35,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
 import cz.teply.sheetset.data.LibraryCatalog
 import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.pdf.DocumentAnnotations
@@ -329,11 +333,13 @@ class ReaderWorkflowRegressionTest {
         var state by mutableStateOf(reader())
         composeRule.setContent {
             SheetSetTheme {
-                ReaderScreen(state, AppSettings(), WindowLayout.COMPACT, SheetSetActions())
+                Box(Modifier.width(320.dp)) {
+                    ReaderScreen(state, AppSettings(), WindowLayout.COMPACT, SheetSetActions())
+                }
             }
         }
         composeRule.onNodeWithContentDescription("Annotation").performClick()
-        composeRule.onNodeWithContentDescription("Eraser").performClick()
+        composeRule.onNodeWithContentDescription("Eraser").assertIsDisplayed().performClick()
 
         composeRule.runOnIdle { state = state.copy(pageIndex = 1) }
 
@@ -368,11 +374,13 @@ class ReaderWorkflowRegressionTest {
     fun eraserRemainsVisibleWhenReenteringAnnotationMode() {
         composeRule.setContent {
             SheetSetTheme {
-                ReaderScreen(reader(), AppSettings(), WindowLayout.COMPACT, SheetSetActions())
+                Box(Modifier.width(320.dp)) {
+                    ReaderScreen(reader(), AppSettings(), WindowLayout.COMPACT, SheetSetActions())
+                }
             }
         }
         composeRule.onNodeWithContentDescription("Annotation").performClick()
-        composeRule.onNodeWithContentDescription("Eraser").performClick()
+        composeRule.onNodeWithContentDescription("Eraser").assertIsDisplayed().performClick()
         composeRule.onNodeWithContentDescription("Done").performClick()
         composeRule.onNodeWithContentDescription("Annotation").performClick()
 

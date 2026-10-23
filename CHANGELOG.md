@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## [0.5.0-alpha.15] - 2026-10-23
+
+### Fixed
+
+- Keep the eraser visible outside the scrolling annotation presets on small screens, including after page changes and reentering annotation mode.
+
 ## [0.5.0-alpha.14] - 2026-10-22
 
 ### Fixed
