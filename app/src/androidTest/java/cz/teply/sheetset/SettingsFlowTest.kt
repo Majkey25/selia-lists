@@ -1,5 +1,8 @@
 package cz.teply.sheetset
 
+import android.app.Activity
+import android.app.Instrumentation
+import android.content.Intent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -30,6 +33,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.espresso.Espresso
+import androidx.test.platform.app.InstrumentationRegistry
 import cz.teply.sheetset.pdf.AnnotationEditorSettings
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.ReaderLayout
@@ -311,6 +315,28 @@ class SettingsFlowTest {
         scrollToText("Privacy policy")
         composeRule.onNodeWithText("Privacy policy").assertIsDisplayed()
         assertSettingsIcon(R.string.privacy_policy, R.drawable.ic_info_24)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var openedUrl: String? = null
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_VIEW) return null
+                openedUrl = intent.dataString
+                return Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try {
+            composeRule.onNodeWithText("Privacy policy").performClick()
+            composeRule.waitForIdle()
+            val expectedUrl = if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) {
+                "https://majkey25.github.io/selia-lists/privacy.html"
+            } else {
+                "https://majkey25.github.io/selia-lists/play/privacy.html"
+            }
+            assertEquals(expectedUrl, openedUrl)
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
         scrollToText("GitHub repository")
         assertSettingsIcon(R.string.github_repository, R.drawable.ic_share_24)
         if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) {

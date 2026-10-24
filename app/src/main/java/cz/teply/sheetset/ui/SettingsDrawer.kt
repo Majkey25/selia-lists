@@ -763,5 +763,9 @@ private fun openUrl(context: Context, url: String) {
 }
 
 private const val REPOSITORY_URL = "https://github.com/Majkey25/selia-lists"
-private const val PRIVACY_URL = "https://majkey25.github.io/selia-lists/privacy.html"
+private val PRIVACY_URL = if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) {
+    "https://majkey25.github.io/selia-lists/privacy.html"
+} else {
+    "https://majkey25.github.io/selia-lists/play/privacy.html"
+}
 private val SUPPORT_URL = if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) "https://www.buymeacoffee.com/majkey" else ""

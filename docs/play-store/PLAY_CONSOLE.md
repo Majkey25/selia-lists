@@ -21,8 +21,8 @@ Build a signed GitHub installation APK separately with `:app:assembleRelease -Pd
 | Category | Music & Audio |
 | Free or paid | Free |
 | Contact email | `majkeylab@gmail.com` |
-| Website | `https://majkey25.github.io/selia-lists/` |
-| Privacy policy | `https://majkey25.github.io/selia-lists/privacy.html` |
+| Website | `https://majkey25.github.io/selia-lists/play/privacy.html` |
+| Privacy policy | `https://majkey25.github.io/selia-lists/play/privacy.html` |
 | Ads | No |
 
 Use the verified legal name, address, phone, and account type already stored in the Play developer account. Do not invent or copy those values into the repository.
