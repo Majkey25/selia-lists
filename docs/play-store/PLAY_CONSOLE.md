@@ -1,6 +1,12 @@
 # Google Play Console publication worksheet
 
-Use these answers for the SeliaLists `0.5.0-alpha.12` closed-test AAB after artifact verification. Re-audit the artifact if the manifest, dependencies, external links, or data handling change.
+Use these answers for the SeliaLists `0.5.0-alpha.16` closed-test AAB after artifact verification. Re-audit the artifact if the manifest, dependencies, external links, or data handling change.
+
+## Distribution channels
+
+Release builds default to the Google Play channel. Build its AAB with `:app:bundleRelease -PdistributionChannel=play`; external donations are not rendered or callable in that channel. The build rejects `bundleRelease -PdistributionChannel=github`.
+
+Build a signed GitHub installation APK separately with `:app:assembleRelease -PdistributionChannel=github`, preserving the existing signing properties and app identity. Copy and hash the APK before building the other channel because the output path is shared. GitHub's existing debug-APK workflow keeps donations enabled. Debug tests can verify Play behavior using `-PdistributionChannel=play`; `SettingsFlowTest.appDetailsGatesDonationsByChannel` checks visibility while preserving version and privacy access.
 
 ## App identity
 
@@ -8,8 +14,8 @@ Use these answers for the SeliaLists `0.5.0-alpha.12` closed-test AAB after arti
 |---|---|
 | App name | `SeliaLists` |
 | Package | `com.majkeylab.sheetset` |
-| Version code | `17` |
-| Version name | `0.5.0-alpha.12` |
+| Version code | `21` |
+| Version name | `0.5.0-alpha.16` |
 | Default language | English (United States) |
 | App or game | App |
 | Category | Music & Audio |
@@ -142,7 +148,7 @@ User-selected exports and shares are not developer collection. Android document 
 
 ## Payments and support
 
-App details contains an optional external Buy Me a Coffee support link. It provides no feature, entitlement, badge, priority, digital content, or service. SeliaLists has no billing SDK and no paid functionality.
+Google Play builds contain no external donation or Buy Me a Coffee action. GitHub builds retain the optional external support link, which provides no feature, entitlement, badge, priority, digital content, or service. SeliaLists has no billing SDK and no paid functionality.
 
 ## Asset checklist
 
@@ -160,7 +166,7 @@ Alt text:
 2. `A synthetic music score open in the SeliaLists reader.`
 3. `Compact SeliaLists annotation toolbar with direct pen, highlighter, eraser, selection, color, undo, and redo controls.`
 4. `SeliaLists color picker with eight clear annotation colors.`
-5. `App details with version, Android requirement, Privacy policy, source links, and optional Buy Me a Coffee support.`
+5. `App details with version, Android requirement, Privacy policy, and source links. The Google Play build has no donation button.`
 6. `Reader settings for page layout, page turning, control visibility, and page fit.`
 
 ## Submission gate

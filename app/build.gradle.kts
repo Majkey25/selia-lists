@@ -12,6 +12,11 @@ if (keystorePropertiesFile.isFile) {
     keystorePropertiesFile.inputStream().use(keystoreProperties::load)
 }
 
+val distributionChannel = providers.gradleProperty("distributionChannel").orNull
+require(distributionChannel == null || distributionChannel in setOf("play", "github")) {
+    "distributionChannel must be play or github"
+}
+
 android {
     namespace = "cz.teply.sheetset"
     compileSdk = 36
@@ -20,9 +25,10 @@ android {
         applicationId = "com.majkeylab.sheetset"
         minSdk = 29
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.5.0-alpha.15"
+        versionCode = 21
+        versionName = "0.5.0-alpha.16"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "EXTERNAL_DONATIONS_ENABLED", (distributionChannel == "github").toString())
     }
 
     signingConfigs {
@@ -48,6 +54,7 @@ android {
 
     buildTypes {
         debug {
+            buildConfigField("boolean", "EXTERNAL_DONATIONS_ENABLED", (distributionChannel != "play").toString())
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
@@ -68,9 +75,15 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     sourceSets.getByName("main").assets.srcDir(rootProject.file("third_party"))
+}
+
+tasks.matching { it.name == "packageReleaseBundle" }.configureEach {
+    val githubChannel = distributionChannel == "github"
+    doFirst { check(!githubChannel) { "Google Play bundles must use distributionChannel=play" } }
 }
 
 kotlin {

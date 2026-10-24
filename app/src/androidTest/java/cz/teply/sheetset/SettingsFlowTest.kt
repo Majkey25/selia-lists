@@ -301,7 +301,7 @@ class SettingsFlowTest {
     }
 
     @Test
-    fun appDetailsKeepsSupportAction() {
+    fun appDetailsGatesDonationsByChannel() {
         setSettingsContent()
         openMenuPage("App details")
 
@@ -313,9 +313,14 @@ class SettingsFlowTest {
         assertSettingsIcon(R.string.privacy_policy, R.drawable.ic_info_24)
         scrollToText("GitHub repository")
         assertSettingsIcon(R.string.github_repository, R.drawable.ic_share_24)
-        scrollToText("Support this app → Buy Me a Coffee")
-        composeRule.onNodeWithText("Support this app → Buy Me a Coffee")
-            .assertIsDisplayed()
+        if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) {
+            scrollToText("Support this app → Buy Me a Coffee")
+            composeRule.onNodeWithText("Support this app → Buy Me a Coffee")
+                .assertIsDisplayed()
+        } else {
+            composeRule.onNodeWithTag("settings-list").performScrollToNode(hasTestTag("app-details-end"))
+            composeRule.onNodeWithText("Support this app → Buy Me a Coffee").assertDoesNotExist()
+        }
     }
 
     @Test

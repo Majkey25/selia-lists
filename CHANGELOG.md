@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## [0.5.0-alpha.16] - 2026-10-24
+
+### Fixed
+
+- Remove external donation actions from Google Play builds while preserving them in GitHub APKs.
+- Open the source directory directly from Play builds, keeping privacy and release links available.
+
 ## [0.5.0-alpha.15] - 2026-10-23
 
 ### Fixed

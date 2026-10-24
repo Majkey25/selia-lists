@@ -72,6 +72,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import cz.teply.sheetset.BuildConfig
 import cz.teply.sheetset.R
 import cz.teply.sheetset.settings.AppLanguages
 import cz.teply.sheetset.settings.AppSettings
@@ -499,7 +500,14 @@ private fun AppDetailsSettings(onBack: () -> Unit) {
                 context,
             )
         }
-        item { LinkRow(R.string.github_repository, R.drawable.ic_share_24, REPOSITORY_URL, context) }
+        item {
+            LinkRow(
+                R.string.github_repository,
+                R.drawable.ic_share_24,
+                REPOSITORY_URL + if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) "" else "/tree/main/app/src",
+                context,
+            )
+        }
         item {
             LinkRow(
                 R.string.release_page,
@@ -508,11 +516,13 @@ private fun AppDetailsSettings(onBack: () -> Unit) {
                 context,
             )
         }
-        item {
+        if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) item {
             Button(
                 onClick = {
-                    Toast.makeText(context, supportNotice, Toast.LENGTH_SHORT).show()
-                    runCatching { uriHandler.openUri(SUPPORT_URL) }
+                    if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) {
+                        Toast.makeText(context, supportNotice, Toast.LENGTH_SHORT).show()
+                        runCatching { uriHandler.openUri(SUPPORT_URL) }
+                    }
                 },
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                     .fillMaxWidth().heightIn(min = 56.dp),
@@ -531,7 +541,7 @@ private fun AppDetailsSettings(onBack: () -> Unit) {
                 Text(stringResource(R.string.support_app))
             }
         }
-        item { Spacer(Modifier.height(24.dp)) }
+        item { Spacer(Modifier.height(24.dp).testTag("app-details-end")) }
     }
 }
 
@@ -754,4 +764,4 @@ private fun openUrl(context: Context, url: String) {
 
 private const val REPOSITORY_URL = "https://github.com/Majkey25/selia-lists"
 private const val PRIVACY_URL = "https://majkey25.github.io/selia-lists/privacy.html"
-private const val SUPPORT_URL = "https://www.buymeacoffee.com/majkey"
+private val SUPPORT_URL = if (BuildConfig.EXTERNAL_DONATIONS_ENABLED) "https://www.buymeacoffee.com/majkey" else ""

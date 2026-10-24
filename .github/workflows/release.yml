@@ -19,7 +19,7 @@ jobs:
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v6
       - name: Verify and build
-        run: ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon --console=plain
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebug -PdistributionChannel=github --no-daemon --console=plain
       - name: Prepare assets
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk "selia-lists-${GITHUB_REF_NAME}-debug.apk"
