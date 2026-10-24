@@ -37,6 +37,25 @@ class ScorePdfHiveTest {
     }
 
     @Test
+    fun emptySetlistIsPreserved() {
+        assertEquals(
+            listOf(ScorePdfSetlist("Show", emptyList())),
+            ScorePdfHive.readSetlists(frame(39, setlist("Show", emptyList()))),
+        )
+    }
+
+    @Test
+    fun listLengthCannotReadIntoFrameCrc() {
+        // The fourth list-count byte is missing; the first CRC byte is zero.
+        val hive = "1e0000000027000000240200040400000053686f77010a000000006dade3"
+            .chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+        assertThrows(BackupException::class.java) {
+            ScorePdfHive.readSetlists(hive)
+        }
+    }
+
+    @Test
     fun corruptedFrameIsRejected() {
         val hive = frame(7, score("Score", "score.pdf")).also { bytes ->
             bytes[12] = (bytes[12].toInt() xor 1).toByte()

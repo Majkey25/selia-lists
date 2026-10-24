@@ -13,6 +13,12 @@ enum class SortDirection { ASCENDING, DESCENDING }
 sealed interface LibraryResult {
     val score: Score
 
+    val key: String
+        get() = when (this) {
+            is ScoreResult -> "score-${score.id}"
+            is BookmarkResult -> "bookmark-${score.id.length}:${score.id}${bookmark.id}"
+        }
+
     data class ScoreResult(override val score: Score) : LibraryResult
 
     data class BookmarkResult(
@@ -31,14 +37,15 @@ fun queryScores(
     val needle = query.trim()
     if (needle.isEmpty()) return scores.map(LibraryResult::ScoreResult)
     return scores.flatMap { score ->
-        if (
-            score.title.contains(needle, ignoreCase = true) ||
-            score.labels.any { it.contains(needle, ignoreCase = true) }
-        ) {
-            listOf(LibraryResult.ScoreResult(score))
-        } else {
+        buildList<LibraryResult> {
+            if (
+                score.title.contains(needle, ignoreCase = true) ||
+                score.labels.any { it.contains(needle, ignoreCase = true) }
+            ) {
+                add(LibraryResult.ScoreResult(score))
+            }
             score.bookmarks.filter { it.title.contains(needle, ignoreCase = true) }
-                .map { LibraryResult.BookmarkResult(score, it) }
+                .forEach { add(LibraryResult.BookmarkResult(score, it)) }
         }
     }
 }

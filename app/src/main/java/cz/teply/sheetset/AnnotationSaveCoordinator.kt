@@ -57,6 +57,9 @@ internal class AnnotationSaveCoordinator(
         snapshot.awaitAll()
     }
 
+    fun pendingAnnotations(scoreId: String): DocumentAnnotations? =
+        synchronized(states) { states[scoreId]?.annotations }
+
     fun isLatest(scoreId: String, result: Deferred<Unit>): Boolean =
         synchronized(states) { states[scoreId]?.latest === result }
 

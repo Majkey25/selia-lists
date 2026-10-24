@@ -24,8 +24,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -33,7 +34,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import cz.teply.sheetset.R
 import cz.teply.sheetset.ReaderUiState
-import cz.teply.sheetset.data.Bookmark
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.PageFit
 import cz.teply.sheetset.settings.ReaderLayout
@@ -55,8 +55,8 @@ internal fun PerformanceToolsSheet(
     onExport: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var addBookmark by remember { mutableStateOf(false) }
-    var renameBookmark by remember { mutableStateOf<Bookmark?>(null) }
+    var addBookmark by rememberSaveable(reader.score.id) { mutableStateOf(false) }
+    var renameBookmarkId by rememberSaveable(reader.score.id) { mutableStateOf<String?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -103,7 +103,7 @@ internal fun PerformanceToolsSheet(
                             },
                             trailingContent = {
                                 Row {
-                                    IconButton(onClick = { renameBookmark = bookmark }) {
+                                    IconButton(onClick = { renameBookmarkId = bookmark.id }) {
                                         Icon(
                                             painterResource(R.drawable.ic_edit_24),
                                             contentDescription = stringResource(R.string.rename),
@@ -186,16 +186,18 @@ internal fun PerformanceToolsSheet(
             },
         )
     }
-    renameBookmark?.let { bookmark ->
-        BookmarkDialog(
-            initialValue = bookmark.title,
-            fallback = bookmark.title,
-            onDismiss = { renameBookmark = null },
-            onSave = {
-                onRenameBookmark(bookmark.id, it)
-                renameBookmark = null
-            },
-        )
+    reader.score.bookmarks.firstOrNull { it.id == renameBookmarkId }?.let { bookmark ->
+        key(bookmark.id) {
+            BookmarkDialog(
+                initialValue = bookmark.title,
+                fallback = bookmark.title,
+                onDismiss = { renameBookmarkId = null },
+                onSave = {
+                    onRenameBookmark(bookmark.id, it)
+                    renameBookmarkId = null
+                },
+            )
+        }
     }
 }
 
@@ -235,7 +237,7 @@ private fun BookmarkDialog(
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
 ) {
-    var value by remember(initialValue) { mutableStateOf(initialValue) }
+    var value by rememberSaveable { mutableStateOf(initialValue) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.add_bookmark)) },

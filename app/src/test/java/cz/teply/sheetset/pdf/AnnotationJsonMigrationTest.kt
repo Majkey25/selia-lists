@@ -1,12 +1,70 @@
 package cz.teply.sheetset.pdf
 
 import cz.teply.sheetset.settings.AnnotationTextSize
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AnnotationJsonMigrationTest {
+    @Test
+    fun duplicatePageIndexesAreRejectedInEveryVersion() {
+        for (version in 1..3) {
+            assertThrows(IllegalArgumentException::class.java) {
+                AnnotationJson.decode("""{"version":$version,"pages":{"0":[],"00":[]}}""")
+            }
+        }
+    }
+
+    @Test
+    fun fractionalAndOverflowingVersionsAreRejected() {
+        for (version in listOf("3.5", "4294967299")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                AnnotationJson.decode("""{"version":$version,"pages":{}}""")
+            }
+        }
+    }
+
+    @Test
+    fun fractionalAndOverflowingOpacityIsRejected() {
+        val source = JSONObject(
+            AnnotationJson.encode(DocumentAnnotations(mapOf(0 to listOf(symbolAnnotation())))),
+        )
+        val symbol = source.getJSONObject("pages").getJSONArray("0").getJSONObject(0)
+
+        for (opacity in listOf<Number>(12.5, 4_294_967_551L, -4_294_967_296L)) {
+            symbol.put("opacity", opacity)
+            assertThrows(IllegalArgumentException::class.java) {
+                AnnotationJson.decode(source.toString())
+            }
+        }
+    }
+
+    @Test
+    fun aggregateTextLimitsApplyToDecodedPagesAndWholeDocument() {
+        val labels = List(15) { index ->
+            TextBoxAnnotation(
+                "text-$index", NormalizedRect(0.1f, 0.1f, 0.5f, 0.3f),
+                "a".repeat(MAX_TEXT_LENGTH), AnnotationTextSize.MEDIUM,
+            )
+        }
+        val accepted = DocumentAnnotations(mapOf(0 to labels))
+        assertEquals(accepted, AnnotationJson.decode(AnnotationJson.encode(accepted)))
+        val raw = JSONObject(AnnotationJson.encode(accepted))
+        val page = raw.getJSONObject("pages").getJSONArray("0")
+        page.put(JSONObject(page.getJSONObject(0).toString()).put("id", "extra"))
+        assertThrows(AnnotationLimitException::class.java) { AnnotationJson.decode(raw.toString()) }
+
+        val pages = (0 until 15).associateWith { pageIndex ->
+            labels.map { it.copy(id = "$pageIndex-${it.id}") }
+        }
+        val document = DocumentAnnotations(pages)
+        assertThrows(AnnotationLimitException::class.java) {
+            document.withPage(15, labels.map { it.copy(id = "15-${it.id}") })
+        }
+    }
+
     @Test
     fun versionOneStrokesMigrateWithoutLoss() {
         val legacy = """
@@ -91,6 +149,25 @@ class AnnotationJsonMigrationTest {
         )
 
         assertEquals(annotations, AnnotationJson.decode(AnnotationJson.encode(annotations)))
+    }
+
+    @Test
+    fun widestEditorShapesRoundTripAndRejectLargerWidths() {
+        val shapes = ShapeKind.entries.map { kind ->
+            ShapeAnnotation(
+                id = kind.name,
+                kind = kind,
+                start = NormalizedPoint(0.2f, 0.2f),
+                end = NormalizedPoint(0.8f, 0.8f),
+                width = 6.normalizedAnnotationWidth(),
+            )
+        }
+        val source = DocumentAnnotations(mapOf(0 to shapes))
+
+        assertEquals(source, AnnotationJson.decode(AnnotationJson.encode(source)))
+        assertThrows(IllegalArgumentException::class.java) {
+            shapes.first().copy(width = 0.2001f)
+        }
     }
 
     @Test

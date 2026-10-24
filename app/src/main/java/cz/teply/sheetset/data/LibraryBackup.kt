@@ -14,9 +14,9 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.FilterOutputStream
 import java.io.InputStream
 import java.io.OutputStream
-import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -26,7 +26,7 @@ private const val BACKUP_VERSION = 2
 // ponytail: 1 GiB bounds untrusted ZIPs; raise after testing larger real libraries.
 internal const val MAX_BACKUP_BYTES = 1L * 1024L * 1024L * 1024L
 internal const val MAX_BACKUP_ENTRIES = 20_000
-private const val MAX_JSON_BYTES = 16L * 1024L * 1024L
+internal const val MAX_JSON_BYTES = 16L * 1024L * 1024L
 
 class BackupException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
@@ -45,54 +45,108 @@ internal fun writeLibraryBackup(
     require(languageTag == null || languageTag in AppLanguages.supportedTags) {
         "Unsupported language"
     }
-    ZipOutputStream(BufferedOutputStream(destination)).use { zip ->
-        zip.writeText(
-            "manifest.json",
-            JSONObject()
-                .put("format", BACKUP_FORMAT)
-                .put("version", BACKUP_VERSION)
-                .put("createdAtEpochMs", System.currentTimeMillis())
-                .put("languageTag", languageTag ?: JSONObject.NULL)
-                .put("settings", settings.toJson())
-                .toString(),
-        )
-        zip.writeText("catalog.json", CatalogJson.encode(catalog))
-        catalog.scores.sortedBy(Score::id).forEach { score ->
-            val scorePath = "scores/${score.fileName}"
-            val source = File(root, scorePath)
-            if (!source.isFile) throw BackupException("Score file is missing")
-            zip.putNextEntry(ZipEntry(scorePath))
-            source.inputStream().use { it.copyTo(zip) }
-            zip.closeEntry()
-            val annotationPath = "annotations/${score.id}.json"
-            val annotation = File(root, annotationPath)
-            if (annotation.isFile) {
-                zip.putNextEntry(ZipEntry(annotationPath))
-                annotation.inputStream().use { it.copyTo(zip) }
+    if (catalog.scores.size > MAX_BACKUP_ENTRIES - 2) {
+        throw BackupException("Backup has too many entries")
+    }
+    val textEntries = listOf(
+        "manifest.json" to JSONObject()
+            .put("format", BACKUP_FORMAT)
+            .put("version", BACKUP_VERSION)
+            .put("createdAtEpochMs", System.currentTimeMillis())
+            .put("languageTag", languageTag ?: JSONObject.NULL)
+            .put("settings", settings.toJson())
+            .toString().toByteArray(Charsets.UTF_8),
+        "catalog.json" to CatalogJson.encode(catalog).toByteArray(Charsets.UTF_8),
+    )
+    if (textEntries.any { it.second.size > MAX_JSON_BYTES }) {
+        throw BackupException("Backup entry is too large")
+    }
+    CatalogJson.decode(textEntries.last().second.toString(Charsets.UTF_8))
+    val files = catalog.scores.sortedBy(Score::id).flatMap { score ->
+        val pdf = File(root, "scores/${score.fileName}")
+        if (!pdf.isFile) throw BackupException("Score file is missing")
+        val annotation = File(root, "annotations/${score.id}.json")
+        val hasAnnotations = openAtomicFile(annotation)?.use { true } ?: false
+        listOfNotNull(pdf, annotation.takeIf { hasAnnotations })
+    }
+    if (files.size + textEntries.size > MAX_BACKUP_ENTRIES) {
+        throw BackupException("Backup has too many entries")
+    }
+    if (files.any { it.length() > backupEntryLimit(it) }) {
+        throw BackupException("Backup entry is too large")
+    }
+    if (textEntries.sumOf { it.second.size.toLong() } + files.sumOf(File::length) > MAX_BACKUP_BYTES) {
+        throw BackupException("Backup is too large")
+    }
+    catalog.scores.forEach { score ->
+        if (validatePdfFile(File(root, "scores/${score.fileName}")) != score.pageCount) {
+            throw BackupException("Backup PDF page count changed")
+        }
+    }
+    val scoresById = catalog.scores.associateBy(Score::id)
+    files.filter { it.parentFile?.name == "annotations" }.forEach { file ->
+        openAtomicFile(file)?.bufferedReader(Charsets.UTF_8)?.use {
+            validateAnnotationPages(it.readText(), scoresById.getValue(file.nameWithoutExtension).pageCount)
+        } ?: throw BackupException("Annotations file is missing")
+    }
+    var totalBytes = 0L
+    ZipOutputStream(BufferedOutputStream(BackupOutputStream(destination))).use { zip ->
+        fun writeEntry(name: String, input: InputStream, limit: Long) {
+            input.use {
+                zip.putNextEntry(ZipEntry(name))
+                totalBytes += copyBounded(it, zip, limit, MAX_BACKUP_BYTES - totalBytes)
                 zip.closeEntry()
             }
+        }
+        textEntries.forEach { (name, bytes) -> writeEntry(name, bytes.inputStream(), MAX_JSON_BYTES) }
+        files.forEach { file ->
+            val name = file.relativeTo(root).invariantSeparatorsPath
+            writeEntry(name, file.inputStream(), backupEntryLimit(file))
         }
     }
 }
 
-internal fun restoreLibraryBackup(root: File, source: InputStream): BackupMetadata {
+private fun backupEntryLimit(file: File): Long =
+    if (file.parentFile?.name == "scores") MAX_PDF_BYTES else MAX_JSON_BYTES
+
+@Synchronized
+internal fun restoreLibraryBackup(root: File, source: InputStream): BackupMetadata = source.use { input ->
+    recoverLibraryBackup(root)
     val parent = root.parentFile ?: throw BackupException("Library has no parent directory")
     if (!parent.exists() && !parent.mkdirs()) throw BackupException("Could not create restore directory")
-    val staging = File(parent, ".${root.name}-restore-${UUID.randomUUID()}")
-    val previous = File(parent, ".${root.name}-previous-${UUID.randomUUID()}")
+    val staging = File(parent, ".${root.name}-restore")
+    val previous = File(parent, ".${root.name}-previous")
+    if (previous.exists()) throw BackupException("Could not remove previous library")
     try {
-        extractArchive(source, staging)
+        extractArchive(input, staging)
         val metadata = validateStaging(staging)
         File(staging, "manifest.json").delete()
         swapDirectories(root, staging, previous)
         previous.deleteRecursively()
-        return metadata
+        metadata
     } catch (error: BackupException) {
         staging.deleteRecursively()
         throw error
     } catch (error: Exception) {
         staging.deleteRecursively()
         throw BackupException("Backup could not be restored", error)
+    }
+}
+
+@Synchronized
+internal fun recoverLibraryBackup(root: File) {
+    val parent = root.parentFile ?: throw BackupException("Library has no parent directory")
+    val previous = File(parent, ".${root.name}-previous")
+    if (previous.exists()) {
+        if (root.exists()) {
+            previous.deleteRecursively()
+        } else if (!previous.renameTo(root)) {
+            throw BackupException("Could not recover previous library")
+        }
+    }
+    val staging = File(parent, ".${root.name}-restore")
+    if (staging.exists() && !staging.deleteRecursively()) {
+        throw BackupException("Could not remove interrupted restore")
     }
 }
 
@@ -113,6 +167,7 @@ private fun extractArchive(source: InputStream, staging: File) {
                 if (name !in setOf("scores/", "annotations/")) {
                     throw BackupException("Backup contains an unsupported directory")
                 }
+                if (zip.read() != -1) throw BackupException("Backup directory contains data")
                 File(staging, name).mkdirsOrThrow()
             } else {
                 if (!isAllowedEntry(name)) throw BackupException("Backup contains an unsupported entry")
@@ -124,6 +179,7 @@ private fun extractArchive(source: InputStream, staging: File) {
                 val entryLimit = if (name.startsWith("scores/")) MAX_PDF_BYTES else MAX_JSON_BYTES
                 FileOutputStream(destination).use { output ->
                     totalBytes += copyBounded(zip, output, entryLimit, MAX_BACKUP_BYTES - totalBytes)
+                    output.fd.sync()
                 }
             }
             zip.closeEntry()
@@ -139,7 +195,7 @@ private fun validateStaging(staging: File): BackupMetadata {
         throw BackupException("Backup manifest or catalog is missing")
     }
     val manifest = JSONObject(manifestFile.readText(Charsets.UTF_8))
-    val version = manifest.optInt("version", -1)
+    val version = manifest.requiredInt("version")
     if (manifest.optString("format") != BACKUP_FORMAT || version !in 1..BACKUP_VERSION) {
         throw BackupException("Unsupported backup format")
     }
@@ -162,15 +218,22 @@ private fun validateStaging(staging: File): BackupMetadata {
         val pageCount = validatePdfFile(file)
         if (pageCount != score.pageCount) throw BackupException("Backup PDF page count changed")
     }
-    val scoreIds = catalog.scores.map(Score::id).toSet()
+    val scoresById = catalog.scores.associateBy(Score::id)
     File(staging, "annotations").listFiles().orEmpty().filter(File::isFile).forEach { file ->
         val scoreId = file.name.removeSuffix(".json")
-        if (file.name != "$scoreId.json" || scoreId !in scoreIds) {
+        val score = scoresById[scoreId]
+        if (file.name != "$scoreId.json" || score == null) {
             throw BackupException("Backup contains orphan annotations")
         }
-        AnnotationJson.decode(file.readText(Charsets.UTF_8))
+        validateAnnotationPages(file.readText(Charsets.UTF_8), score.pageCount)
     }
     return BackupMetadata(settings, languageTag)
+}
+
+private fun validateAnnotationPages(raw: String, pageCount: Int) {
+    if (AnnotationJson.decode(raw).pages.keys.any { it !in 0 until pageCount }) {
+        throw BackupException("Backup contains annotations outside PDF pages")
+    }
 }
 
 private fun swapDirectories(root: File, staging: File, previous: File) {
@@ -223,10 +286,23 @@ private fun copyBounded(
     return copied
 }
 
-private fun ZipOutputStream.writeText(name: String, text: String) {
-    putNextEntry(ZipEntry(name))
-    write(text.toByteArray(Charsets.UTF_8))
-    closeEntry()
+private class BackupOutputStream(output: OutputStream) : FilterOutputStream(output) {
+    private var written = 0L
+
+    override fun write(value: Int) {
+        checkSize(1)
+        out.write(value)
+    }
+
+    override fun write(bytes: ByteArray, offset: Int, length: Int) {
+        checkSize(length)
+        out.write(bytes, offset, length)
+    }
+
+    private fun checkSize(length: Int) {
+        written += length
+        if (written > MAX_BACKUP_BYTES) throw BackupException("Backup is too large")
+    }
 }
 
 private fun AppSettings.toJson(): JSONObject = JSONObject()

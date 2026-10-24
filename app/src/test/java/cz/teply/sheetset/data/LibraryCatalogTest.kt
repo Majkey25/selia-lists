@@ -146,6 +146,29 @@ class LibraryCatalogTest {
     }
 
     @Test
+    fun `labels truncated at whitespace survive catalog reload`() {
+        val catalog = LibraryCatalog(
+            scores = listOf(Score("score-1", "Song", "score-1.pdf", 1, 1L)),
+            setlists = listOf(Setlist("set-1", "Show")),
+        )
+        val label = "a".repeat(MAX_LABEL_LENGTH - 1)
+        val labels = listOf("$label b", label)
+
+        val updated = catalog
+            .updateScoreLabels("score-1", labels)
+            .updateSetlistLabels("set-1", labels)
+
+        assertEquals(listOf(label), updated.scores.single().labels)
+        assertEquals(listOf(label), updated.setlists.single().labels)
+        assertEquals(updated, CatalogJson.decode(CatalogJson.encode(updated)))
+        assertEquals(
+            updated,
+            updated.updateScoreLabels("score-1", updated.scores.single().labels)
+                .updateSetlistLabels("set-1", updated.setlists.single().labels),
+        )
+    }
+
+    @Test
     fun `reader position stays inside score`() {
         val score = Score("score-1", "Song", "score-1.pdf", 4, 1L)
         val catalog = LibraryCatalog(scores = listOf(score))

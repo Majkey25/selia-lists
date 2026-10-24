@@ -179,6 +179,7 @@ internal object ScorePdfHive {
         }
 
         private fun uint32Value(): Long {
+            requireAvailable(Int.SIZE_BYTES)
             val value = uint32Long(bytes, offset)
             offset += Int.SIZE_BYTES
             return value

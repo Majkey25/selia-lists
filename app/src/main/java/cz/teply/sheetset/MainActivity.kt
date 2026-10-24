@@ -9,9 +9,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cz.teply.sheetset.settings.AppLanguages
@@ -79,6 +83,26 @@ class MainActivity : AppCompatActivity() {
                         windowLayout = WindowLayout.fromWidth(maxWidth),
                     )
                 }
+                val incomingPdfs = state.incomingPdfs
+                if (incomingPdfs.isNotEmpty()) {
+                    AlertDialog(
+                        onDismissRequest = viewModel::dismissIncomingPdfs,
+                        title = { Text(stringResource(R.string.import_pdf)) },
+                        text = {
+                            Text(stringResource(R.string.confirm_incoming_pdfs, incomingPdfs.size))
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { viewModel.confirmIncomingPdfs(incomingPdfs) }) {
+                                Text(stringResource(R.string.import_pdf))
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = viewModel::dismissIncomingPdfs) {
+                                Text(stringResource(R.string.cancel))
+                            }
+                        },
+                    )
+                }
             }
         }
         handleIncomingPdfIntent(intent)
@@ -93,7 +117,7 @@ class MainActivity : AppCompatActivity() {
     private fun handleIncomingPdfIntent(source: Intent) {
         val uris = IncomingPdfIntent.uris(source)
         if (uris.isEmpty()) return
-        viewModel.importPdfs(uris)
+        viewModel.offerIncomingPdfs(uris)
         setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN))
     }
 

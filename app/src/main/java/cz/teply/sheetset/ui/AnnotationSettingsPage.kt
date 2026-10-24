@@ -36,6 +36,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
@@ -524,6 +525,10 @@ private fun ReorderHandle(
     onDragCancel: () -> Unit,
     onMove: (Int) -> Unit,
 ) {
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    val currentOnDragCancel by rememberUpdatedState(onDragCancel)
     val reorder = stringResource(R.string.reorder)
     val moveUp = stringResource(R.string.move_up)
     val moveDown = stringResource(R.string.move_down)
@@ -544,12 +549,12 @@ private fun ReorderHandle(
             customActions = actions
         }.pointerInput(itemKey) {
             detectDragGestures(
-                onDragStart = { onDragStart() },
-                onDragEnd = onDragEnd,
-                onDragCancel = onDragCancel,
+                onDragStart = { currentOnDragStart() },
+                onDragEnd = { currentOnDragEnd() },
+                onDragCancel = { currentOnDragCancel() },
             ) { change, amount ->
                 change.consume()
-                onDrag(amount.y)
+                currentOnDrag(amount.y)
             }
         },
         contentAlignment = Alignment.Center,

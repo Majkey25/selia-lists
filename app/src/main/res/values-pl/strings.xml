@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="confirm_incoming_pdfs">Dodać udostępnione pliki PDF do biblioteki? Liczba plików: %1$d</string>
     <string name="app_name">SeliaLists</string>
     <string name="tab_pdf">PDF</string>
     <string name="tab_setlists">Setlisty</string>
@@ -43,6 +44,8 @@
     <string name="choose_pdfs">Wybierz pliki PDF z biblioteki.</string>
     <string name="import_first">Najpierw zaimportuj pliki na karcie PDF.</string>
     <string name="action_failed">Nie udało się ukończyć działania.</string>
+    <string name="annotation_limit_reached">Ta zmiana przekracza limit złożoności adnotacji. Dotychczasowe adnotacje zostały zachowane.</string>
+    <string name="pdf_export_limit_reached">Ten PDF przekracza bezpieczny rozmiar eksportu dla dostępnej pamięci. Wyeksportuj mniejszy dokument. Oryginał został zachowany.</string>
     <string name="close">Zamknij</string>
     <string name="export">Eksportuj</string>
     <string name="annotate">Dodaj adnotację</string>
