@@ -1,12 +1,46 @@
 package cz.teply.sheetset.pdf
 
 import cz.teply.sheetset.settings.AnnotationTextSize
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AnnotationJsonMigrationTest {
+    @Test
+    fun duplicatePageIndexesAreRejectedInEveryVersion() {
+        for (version in 1..3) {
+            assertThrows(IllegalArgumentException::class.java) {
+                AnnotationJson.decode("""{"version":$version,"pages":{"0":[],"00":[]}}""")
+            }
+        }
+    }
+
+    @Test
+    fun fractionalAndOverflowingVersionsAreRejected() {
+        for (version in listOf("3.5", "4294967299")) {
+            assertThrows(IllegalArgumentException::class.java) {
+                AnnotationJson.decode("""{"version":$version,"pages":{}}""")
+            }
+        }
+    }
+
+    @Test
+    fun fractionalAndOverflowingOpacityIsRejected() {
+        val source = JSONObject(
+            AnnotationJson.encode(DocumentAnnotations(mapOf(0 to listOf(symbolAnnotation())))),
+        )
+        val symbol = source.getJSONObject("pages").getJSONArray("0").getJSONObject(0)
+
+        for (opacity in listOf<Number>(12.5, 4_294_967_551L, -4_294_967_296L)) {
+            symbol.put("opacity", opacity)
+            assertThrows(IllegalArgumentException::class.java) {
+                AnnotationJson.decode(source.toString())
+            }
+        }
+    }
+
     @Test
     fun versionOneStrokesMigrateWithoutLoss() {
         val legacy = """
@@ -91,6 +125,25 @@ class AnnotationJsonMigrationTest {
         )
 
         assertEquals(annotations, AnnotationJson.decode(AnnotationJson.encode(annotations)))
+    }
+
+    @Test
+    fun widestEditorShapesRoundTripAndRejectLargerWidths() {
+        val shapes = ShapeKind.entries.map { kind ->
+            ShapeAnnotation(
+                id = kind.name,
+                kind = kind,
+                start = NormalizedPoint(0.2f, 0.2f),
+                end = NormalizedPoint(0.8f, 0.8f),
+                width = 6.normalizedAnnotationWidth(),
+            )
+        }
+        val source = DocumentAnnotations(mapOf(0 to shapes))
+
+        assertEquals(source, AnnotationJson.decode(AnnotationJson.encode(source)))
+        assertThrows(IllegalArgumentException::class.java) {
+            shapes.first().copy(width = 0.2001f)
+        }
     }
 
     @Test

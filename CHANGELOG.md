@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## [0.5.0-alpha.12] - 2026-10-13
+
+### Fixed
+
+- Recover interrupted library restores and atomic catalog or annotation saves.
+- Reject malformed backup sizes and verify that exported backups can be restored.
+- Preserve annotations during concurrent saves, reader transitions, and failed-save retries.
+- Give each shared backup its own file and URI with bounded cache retention.
+- Keep text wrapping and stroke widths consistent between the reader and exported PDF.
+- Restore unfinished annotation, bookmark, library, and setlist dialogs after recreation.
+- Correct setlist drag callbacks, overlapping search results, and settings accessibility.
+- Select and erase wide strokes using their rendered width and page aspect ratio.
+- Keep two-finger zoom independent of stylus motion and release multitouch state when fingers lift.
+- Stage private PDF and annotation files before deleting a score, and recover interrupted deletion from the committed catalog.
+- Update repository and privacy links after renaming the repository to selia-lists.
+
+## [0.5.0-alpha.11] - 2026-10-05
+
+### Fixed
+
+- Keep scores visible for retry when their private files cannot be deleted, and report the failed operation.
+- Include the Noto Music font's copyright and license in APK assets.
+
+## [0.5.0-alpha.10] - 2026-09-22
+
+### Fixed
+
+- Matched the launcher, themed launcher, store icon, and website favicon to SeliaScan's white document artwork on a black background.
+
 ## [0.5.0-alpha.9] - 2026-08-29
 
 ### Changed

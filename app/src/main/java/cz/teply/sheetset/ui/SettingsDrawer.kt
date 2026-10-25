@@ -28,6 +28,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -51,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,6 +65,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -102,7 +106,7 @@ fun SettingsDrawer(
     onRestore: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    var screen by remember { mutableStateOf(DrawerScreen.MENU) }
+    var screen by rememberSaveable { mutableStateOf(DrawerScreen.MENU) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(drawerState.currentValue) {
         if (drawerState.currentValue == DrawerValue.Closed) screen = DrawerScreen.MENU
@@ -294,7 +298,7 @@ private fun ReaderSettings(
     onGestures: () -> Unit,
     onSettings: (AppSettings) -> Unit,
 ) {
-    var choice by remember { mutableStateOf<ReaderChoice?>(null) }
+    var choice by rememberSaveable { mutableStateOf<ReaderChoice?>(null) }
     SettingsPage(R.string.reader_page, onBack) {
         item { SettingsSectionTitle(R.string.settings_layout) }
         item {
@@ -606,10 +610,11 @@ internal fun SettingsSwitchRow(
     onChecked: (Boolean) -> Unit,
 ) {
     ListItem(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onChecked(!checked) },
+        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChecked),
         headlineContent = { Text(stringResource(label)) },
         supportingContent = { Text(stringResource(summary)) },
-        trailingContent = { Switch(checked = checked, onCheckedChange = onChecked) },
+        trailingContent = { Switch(checked = checked, onCheckedChange = null) },
     )
 }
 
@@ -671,10 +676,9 @@ private fun SettingsActionRow(
 private fun SettingsRadioRow(@StringRes label: Int, selected: Boolean, onClick: () -> Unit) {
     ListItem(
         modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)
-            .semantics { this.selected = selected }
-            .clickable(onClick = onClick),
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
         headlineContent = { Text(stringResource(label)) },
-        leadingContent = { RadioButton(selected = selected, onClick = onClick) },
+        leadingContent = { RadioButton(selected = selected, onClick = null) },
     )
 }
 
@@ -748,6 +752,6 @@ private fun openUrl(context: Context, url: String) {
     }
 }
 
-private const val REPOSITORY_URL = "https://github.com/Majkey25/SheetSet"
-private const val PRIVACY_URL = "https://majkey25.github.io/SheetSet/privacy.html"
+private const val REPOSITORY_URL = "https://github.com/Majkey25/selia-lists"
+private const val PRIVACY_URL = "https://majkey25.github.io/selia-lists/privacy.html"
 private const val SUPPORT_URL = "https://www.buymeacoffee.com/majkey"

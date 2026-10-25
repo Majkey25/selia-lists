@@ -155,7 +155,7 @@ data class ShapeAnnotation(
 ) : PageAnnotation {
     init {
         requireValidId(id)
-        require(width > 0f && width <= 0.1f) { "Invalid shape width" }
+        require(width > 0f && width <= 0.2f) { "Invalid shape width" }
         require(opacity in 0..255) { "Invalid annotation opacity" }
     }
 }
@@ -292,12 +292,24 @@ object AnnotationJson {
 
     fun decode(raw: String): DocumentAnnotations {
         val root = JSONObject(raw)
-        return when (root.getInt("version")) {
+        val pages = root.getJSONObject("pages")
+        require(pages.keys().asSequence().map(String::toInt).toSet().size == pages.length()) {
+            "Duplicate page index"
+        }
+        return when (root.exactInt("version")) {
             1 -> decodeVersionOne(root)
             2 -> decodeVersionTwo(root)
             VERSION -> decodeVersionThree(root)
             else -> throw IllegalArgumentException("Unsupported annotation version")
         }
+    }
+
+    private fun JSONObject.exactInt(key: String): Int {
+        val value = getDouble(key)
+        require(value in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble() && value % 1.0 == 0.0) {
+            "Invalid annotation integer: $key"
+        }
+        return value.toInt()
     }
 
     private fun decodeVersionOne(root: JSONObject): DocumentAnnotations {
@@ -461,7 +473,7 @@ object AnnotationJson {
             width = getDouble("width").toFloat(),
             points = getJSONArray("points").toPoints(),
             color = AnnotationColor.decode(getString("color")),
-            opacity = getInt("opacity"),
+            opacity = exactInt("opacity"),
         )
 
         "markup" -> MarkupAnnotation(
@@ -469,7 +481,7 @@ object AnnotationJson {
             kind = MarkupKind.valueOf(getString("kind")),
             bounds = getJSONArray("bounds").toRects(),
             color = AnnotationColor.decode(getString("color")),
-            opacity = getInt("opacity"),
+            opacity = exactInt("opacity"),
         )
 
         "text" -> TextBoxAnnotation(
@@ -480,7 +492,7 @@ object AnnotationJson {
             lineHeight = getDouble("lineHeight").toFloat(),
             alignment = AnnotationTextAlignment.valueOf(getString("alignment")),
             color = AnnotationColor.decode(getString("color")),
-            opacity = getInt("opacity"),
+            opacity = exactInt("opacity"),
         )
 
         "shape" -> ShapeAnnotation(
@@ -490,7 +502,7 @@ object AnnotationJson {
             end = getJSONArray("end").toPoint(),
             width = getDouble("width").toFloat(),
             color = AnnotationColor.decode(getString("color")),
-            opacity = getInt("opacity"),
+            opacity = exactInt("opacity"),
         )
 
         "symbol" -> SymbolAnnotation(
@@ -500,7 +512,7 @@ object AnnotationJson {
             size = getDouble("size").toFloat(),
             rotationDegrees = getDouble("rotationDegrees").toFloat(),
             color = AnnotationColor.decode(getString("color")),
-            opacity = getInt("opacity"),
+            opacity = exactInt("opacity"),
         )
 
         else -> throw IllegalArgumentException("Unsupported annotation type")

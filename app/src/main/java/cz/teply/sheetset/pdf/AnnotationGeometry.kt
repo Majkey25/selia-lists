@@ -1,5 +1,6 @@
 package cz.teply.sheetset.pdf
 
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -16,15 +17,34 @@ enum class AnnotationHandle { TOP_LEFT, TOP_RIGHT, BOTTOM_RIGHT, BOTTOM_LEFT, ST
 fun List<PageAnnotation>.topmostHit(
     point: NormalizedPoint,
     radius: Float,
-): PageAnnotation? = asReversed().firstOrNull { it.hitTest(point, radius) }
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
+): PageAnnotation? = asReversed().firstOrNull { it.hitTest(point, radius, pageWidth, pageHeight) }
 
-fun PageAnnotation.hitTest(point: NormalizedPoint, radius: Float): Boolean {
-    require(radius >= 0f) { "Hit radius must not be negative" }
+fun PageAnnotation.hitTest(
+    point: NormalizedPoint,
+    radius: Float,
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
+): Boolean {
+    require(radius.isFinite() && radius >= 0f) { "Hit radius must be finite and not negative" }
+    requirePageSize(pageWidth, pageHeight)
+    val position = point.onPage(pageWidth, pageHeight)
+    val hitRadius = radius.toDouble() * min(pageWidth, pageHeight)
     return when (this) {
         is InkAnnotation -> when {
-            points.size == 1 -> distance(points.single(), point) <= radius
-            else -> points.zipWithNext().any { (start, end) ->
-                distanceToSegment(point, start, end) <= radius
+            kind == InkKind.HIGHLIGHTER -> highlighterPolygons(pageWidth, pageHeight)
+                .any { it.hit(position, hitRadius) }
+            else -> {
+                val strokeRadius = width.toDouble() * min(pageWidth, pageHeight) / 2 + hitRadius
+                val path = points.map { it.onPage(pageWidth, pageHeight) }
+                if (path.size == 1) {
+                    distanceToSegment(position, path.single(), path.single()) <= strokeRadius
+                } else {
+                    path.zipWithNext().any { (start, end) ->
+                        distanceToSegment(position, start, end) <= strokeRadius
+                    }
+                }
             }
         }
 
@@ -32,11 +52,29 @@ fun PageAnnotation.hitTest(point: NormalizedPoint, radius: Float): Boolean {
         is TextBoxAnnotation -> bounds.contains(point, radius)
         is SymbolAnnotation -> normalizedBounds().contains(point, radius)
         is ShapeAnnotation -> when (kind) {
-            ShapeKind.LINE, ShapeKind.ARROW ->
-                distanceToSegment(point, start, end) <= radius + width
+            ShapeKind.LINE, ShapeKind.ARROW -> {
+                val from = start.onPage(pageWidth, pageHeight)
+                val to = end.onPage(pageWidth, pageHeight)
+                val strokeRadius = hitRadius + width.toDouble() * min(pageWidth, pageHeight) / 2
+                if (distanceToSegment(position, from, to) <= strokeRadius) {
+                    true
+                } else if (kind == ShapeKind.LINE) {
+                    false
+                } else {
+                    // Match the two arrowhead segments in AnnotationRenderer.drawShape.
+                    val angle = atan2(to.y - from.y, to.x - from.x)
+                    val length = hypot(to.x - from.x, to.y - from.y)
+                    val head = min(length * 0.25f, min(pageWidth, pageHeight).toDouble() * 0.04f)
+                    val spread = 0.55f
+                    listOf(angle - spread, angle + spread).any { direction ->
+                        val headEnd = MetricPoint(to.x - cos(direction) * head, to.y - sin(direction) * head)
+                        distanceToSegment(position, to, headEnd) <= strokeRadius
+                    }
+                }
+            }
 
-            ShapeKind.RECTANGLE -> normalizedBounds().contains(point, radius)
-            ShapeKind.ELLIPSE -> ellipseContains(point, radius)
+            ShapeKind.RECTANGLE, ShapeKind.ELLIPSE ->
+                closedShapeContains(position, hitRadius, pageWidth, pageHeight)
         }
     }
 }
@@ -58,8 +96,20 @@ fun PageAnnotation.translated(dx: Float, dy: Float): PageAnnotation {
     }
 }
 
-fun List<PageAnnotation>.lassoSelection(bounds: NormalizedRect): Set<String> =
-    filter { it.normalizedBounds().intersects(bounds) }.mapTo(mutableSetOf(), PageAnnotation::id)
+fun List<PageAnnotation>.lassoSelection(
+    bounds: NormalizedRect,
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
+): Set<String> {
+    requirePageSize(pageWidth, pageHeight)
+    return filter {
+        if (it is InkAnnotation) {
+            it.intersectsLasso(bounds, pageWidth, pageHeight)
+        } else {
+            it.normalizedBounds().intersects(bounds)
+        }
+    }.mapTo(mutableSetOf(), PageAnnotation::id)
+}
 
 fun List<PageAnnotation>.translateSelection(
     ids: Set<String>,
@@ -106,7 +156,7 @@ fun PageAnnotation.resized(start: NormalizedPoint, end: NormalizedPoint): PageAn
                 (target.left + target.right) / 2f,
                 (target.top + target.bottom) / 2f,
             ),
-            size = max(target.width(), target.height()).coerceAtMost(0.5f),
+            size = max(target.width(), target.height()).coerceIn(MIN_ANNOTATION_SIZE, 0.5f),
         )
         is ShapeAnnotation -> when (kind) {
             ShapeKind.LINE, ShapeKind.ARROW -> {
@@ -121,7 +171,10 @@ fun PageAnnotation.resized(start: NormalizedPoint, end: NormalizedPoint): PageAn
     }
 }
 
-fun PageAnnotation.resizeHandles(): Map<AnnotationHandle, NormalizedPoint> = when (this) {
+fun PageAnnotation.resizeHandles(
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
+): Map<AnnotationHandle, NormalizedPoint> = when (this) {
     is InkAnnotation -> emptyMap()
     is ShapeAnnotation -> when (kind) {
         ShapeKind.LINE, ShapeKind.ARROW -> mapOf(
@@ -133,18 +186,24 @@ fun PageAnnotation.resizeHandles(): Map<AnnotationHandle, NormalizedPoint> = whe
     is MarkupAnnotation, is TextBoxAnnotation ->
         normalizedBounds().cornerHandles()
     is SymbolAnnotation -> normalizedBounds().cornerHandles() +
-        (AnnotationHandle.ROTATION to rotationHandle())
+        (AnnotationHandle.ROTATION to rotationHandle(pageWidth, pageHeight))
 }
 
-fun PageAnnotation.resized(handle: AnnotationHandle, point: NormalizedPoint): PageAnnotation {
+fun PageAnnotation.resized(
+    handle: AnnotationHandle,
+    point: NormalizedPoint,
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
+): PageAnnotation {
     if (this is InkAnnotation) return this
     if (this is SymbolAnnotation && handle == AnnotationHandle.ROTATION) {
-        val dx = point.x - center.x
-        val dy = point.y - center.y
-        return if (dx == 0f && dy == 0f) {
+        requirePageSize(pageWidth, pageHeight)
+        val dx = (point.x.toDouble() - center.x) * pageWidth
+        val dy = (point.y.toDouble() - center.y) * pageHeight
+        return if (dx == 0.0 && dy == 0.0) {
             this
         } else {
-            rotated(Math.toDegrees(atan2(dy, dx).toDouble()).toFloat() + 90f)
+            rotated(Math.toDegrees(atan2(dy, dx)).toFloat() + 90f)
         }
     }
     if (this is ShapeAnnotation && kind in setOf(ShapeKind.LINE, ShapeKind.ARROW)) {
@@ -193,12 +252,19 @@ private fun NormalizedRect.cornerHandles(): Map<AnnotationHandle, NormalizedPoin
     AnnotationHandle.BOTTOM_LEFT to NormalizedPoint(left, bottom),
 )
 
-private fun SymbolAnnotation.rotationHandle(): NormalizedPoint {
+private fun SymbolAnnotation.rotationHandle(pageWidth: Float, pageHeight: Float): NormalizedPoint {
+    requirePageSize(pageWidth, pageHeight)
     val angle = Math.toRadians((rotationDegrees - 90f).toDouble())
-    val radius = size / 2f
+    val radius = size.toDouble() * min(pageWidth, pageHeight) / 2
+    // Exact cardinal directions avoid collapsing a handle tangent to the page edge.
+    val dx = if (rotationDegrees % 180f == 0f) 0.0 else cos(angle) * radius / pageWidth
+    val dy = if ((rotationDegrees - 90f) % 180f == 0f) 0.0 else sin(angle) * radius / pageHeight
+    var scale = 1.0
+    if (dx != 0.0) scale = min(scale, (if (dx > 0.0) 1.0 - center.x else -center.x.toDouble()) / dx)
+    if (dy != 0.0) scale = min(scale, (if (dy > 0.0) 1.0 - center.y else -center.y.toDouble()) / dy)
     return NormalizedPoint(
-        x = (center.x + cos(angle).toFloat() * radius).coerceIn(0f, 1f),
-        y = (center.y + sin(angle).toFloat() * radius).coerceIn(0f, 1f),
+        x = (center.x + dx * scale).toFloat().coerceIn(0f, 1f),
+        y = (center.y + dy * scale).toFloat().coerceIn(0f, 1f),
     )
 }
 
@@ -254,15 +320,42 @@ private fun PageAnnotation.withId(id: String): PageAnnotation = when (this) {
     is ShapeAnnotation -> copy(id = id)
 }
 
-private fun ShapeAnnotation.ellipseContains(point: NormalizedPoint, radius: Float): Boolean {
-    val bounds = normalizedBounds()
-    val radiusX = bounds.width() / 2f + radius
-    val radiusY = bounds.height() / 2f + radius
-    if (radiusX <= 0f || radiusY <= 0f) return false
-    val centerX = (bounds.left + bounds.right) / 2f
-    val centerY = (bounds.top + bounds.bottom) / 2f
-    return ((point.x - centerX) / radiusX).pow(2) +
-        ((point.y - centerY) / radiusY).pow(2) <= 1f
+private fun ShapeAnnotation.closedShapeContains(
+    point: MetricPoint,
+    radius: Double,
+    pageWidth: Float,
+    pageHeight: Float,
+): Boolean {
+    val from = start.onPage(pageWidth, pageHeight)
+    val to = end.onPage(pageWidth, pageHeight)
+    val radiusX = abs(to.x - from.x) / 2
+    val radiusY = abs(to.y - from.y) / 2
+    val x = abs(point.x - (from.x + to.x) / 2)
+    val y = abs(point.y - (from.y + to.y) / 2)
+    val tolerance = radius + width.toDouble() * min(pageWidth, pageHeight) / 2
+    if (hypot((x - radiusX).coerceAtLeast(0.0), (y - radiusY).coerceAtLeast(0.0)) > tolerance) {
+        return false
+    }
+    if (kind == ShapeKind.RECTANGLE) return true
+    if (radiusX == 0.0 || radiusY == 0.0) return false
+    if ((x / radiusX).pow(2) + (y / radiusY).pow(2) <= 1.0) return true
+
+    val squaredX = radiusX * radiusX
+    val squaredY = radiusY * radiusY
+    var lower = 0.0
+    var upper = hypot(radiusX * x, radiusY * y)
+    // Solve the nearest ellipse point; expanding its axes does not preserve stroke distance.
+    repeat(48) {
+        val value = (lower + upper) / 2
+        val ellipseX = radiusX * x / (value + squaredX)
+        val ellipseY = radiusY * y / (value + squaredY)
+        if (ellipseX * ellipseX + ellipseY * ellipseY > 1.0) lower = value else upper = value
+    }
+    val value = (lower + upper) / 2
+    return hypot(
+        x - squaredX * x / (value + squaredX),
+        y - squaredY * y / (value + squaredY),
+    ) <= tolerance
 }
 
 private fun NormalizedPoint.translated(dx: Float, dy: Float): NormalizedPoint = NormalizedPoint(
@@ -278,13 +371,13 @@ private fun NormalizedRect.translated(dx: Float, dy: Float): NormalizedRect = No
 )
 
 private fun NormalizedRect.scaled(source: NormalizedRect, target: NormalizedRect): NormalizedRect {
-    val scaleX = target.width() / source.width()
-    val scaleY = target.height() / source.height()
+    val scaleX = target.width().toDouble() / source.width()
+    val scaleY = target.height().toDouble() / source.height()
     return NormalizedRect(
-        left = target.left + (left - source.left) * scaleX,
-        top = target.top + (top - source.top) * scaleY,
-        right = target.left + (right - source.left) * scaleX,
-        bottom = target.top + (bottom - source.top) * scaleY,
+        left = (target.left + (left - source.left) * scaleX).toFloat().coerceIn(target.left, target.right),
+        top = (target.top + (top - source.top) * scaleY).toFloat().coerceIn(target.top, target.bottom),
+        right = (target.left + (right - source.left) * scaleX).toFloat().coerceIn(target.left, target.right),
+        bottom = (target.top + (bottom - source.top) * scaleY).toFloat().coerceIn(target.top, target.bottom),
     )
 }
 
@@ -336,18 +429,110 @@ private fun distance(first: NormalizedPoint, second: NormalizedPoint): Float = h
 )
 
 private fun distanceToSegment(
-    point: NormalizedPoint,
-    start: NormalizedPoint,
-    end: NormalizedPoint,
-): Float {
+    point: MetricPoint,
+    start: MetricPoint,
+    end: MetricPoint,
+): Double {
     val dx = end.x - start.x
     val dy = end.y - start.y
     val lengthSquared = dx * dx + dy * dy
-    if (lengthSquared == 0f) return distance(point, start)
+    if (lengthSquared == 0.0) return hypot(point.x - start.x, point.y - start.y)
     val projection = (((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared)
-        .coerceIn(0f, 1f)
+        .coerceIn(0.0, 1.0)
     return hypot(
         point.x - (start.x + projection * dx),
         point.y - (start.y + projection * dy),
     )
+}
+
+private fun requirePageSize(width: Float, height: Float) {
+    require(width.isFinite() && height.isFinite() && width > 0f && height > 0f) {
+        "Page size must be finite and positive"
+    }
+}
+
+private data class MetricPoint(val x: Double, val y: Double) {
+    operator fun plus(other: MetricPoint) = MetricPoint(x + other.x, y + other.y)
+    operator fun minus(other: MetricPoint) = MetricPoint(x - other.x, y - other.y)
+    operator fun times(scale: Double) = MetricPoint(x * scale, y * scale)
+}
+
+private fun NormalizedPoint.onPage(width: Float, height: Float) =
+    MetricPoint(x.toDouble() * width, y.toDouble() * height)
+
+private fun InkAnnotation.highlighterPolygons(
+    pageWidth: Float,
+    pageHeight: Float,
+): Sequence<List<MetricPoint>> = sequence {
+    val halfWidth = width.toDouble() * min(pageWidth, pageHeight) / 2
+    val path = points.map { it.onPage(pageWidth, pageHeight) }
+    val segments = path.zipWithNext().filter { (start, end) -> start != end }
+    if (segments.isEmpty()) {
+        val center = path.first()
+        yield(
+            listOf(
+                center + MetricPoint(-halfWidth, -halfWidth),
+                center + MetricPoint(halfWidth, -halfWidth),
+                center + MetricPoint(halfWidth, halfWidth),
+                center + MetricPoint(-halfWidth, halfWidth),
+            ),
+        )
+        return@sequence
+    }
+    var previousNormal: MetricPoint? = null
+    segments.forEachIndexed { index, (start, end) ->
+        val delta = end - start
+        val cap = delta * (halfWidth / hypot(delta.x, delta.y))
+        val normal = MetricPoint(-cap.y, cap.x)
+        val from = if (index == 0) start - cap else start
+        val to = if (index == segments.lastIndex) end + cap else end
+        yield(listOf(from + normal, to + normal, to - normal, from - normal))
+        val previous = previousNormal
+        if (previous != null && previous.x * normal.y != previous.y * normal.x) {
+            yield(listOf(start, start + previous, start + normal))
+            yield(listOf(start, start - previous, start - normal))
+        }
+        previousNormal = normal
+    }
+}
+
+private fun List<MetricPoint>.hit(point: MetricPoint, radius: Double): Boolean {
+    var positive = false
+    var negative = false
+    for (index in indices) {
+        val start = this[index]
+        val end = this[(index + 1) % size]
+        if (distanceToSegment(point, start, end) <= radius) return true
+        val cross = (end.x - start.x) * (point.y - start.y) -
+            (end.y - start.y) * (point.x - start.x)
+        positive = positive || cross > 0
+        negative = negative || cross < 0
+    }
+    return !(positive && negative)
+}
+
+private fun InkAnnotation.intersectsLasso(
+    lasso: NormalizedRect,
+    pageWidth: Float,
+    pageHeight: Float,
+): Boolean {
+    val bounds = normalizedBounds()
+    var left = bounds.left.toDouble() * pageWidth
+    var right = bounds.right.toDouble() * pageWidth
+    var top = bounds.top.toDouble() * pageHeight
+    var bottom = bounds.bottom.toDouble() * pageHeight
+    val padding = if (kind == InkKind.PEN) width.toDouble() * min(pageWidth, pageHeight) / 2 else 0.0
+    val outline = if (kind == InkKind.HIGHLIGHTER) {
+        highlighterPolygons(pageWidth, pageHeight).flatten()
+    } else {
+        points.asSequence().map { it.onPage(pageWidth, pageHeight) }
+    }
+    for (point in outline) {
+        left = min(left, point.x - padding)
+        right = max(right, point.x + padding)
+        top = min(top, point.y - padding)
+        bottom = max(bottom, point.y + padding)
+    }
+    return left <= lasso.right.toDouble() * pageWidth && right >= lasso.left.toDouble() * pageWidth &&
+        top <= lasso.bottom.toDouble() * pageHeight && bottom >= lasso.top.toDouble() * pageHeight
 }

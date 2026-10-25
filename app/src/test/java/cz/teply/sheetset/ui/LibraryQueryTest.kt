@@ -50,6 +50,40 @@ class LibraryQueryTest {
     }
 
     @Test
+    fun `title match also returns matching bookmark page`() {
+        val score = first.copy(title = "Chorus collection")
+        assertEquals(
+            listOf(
+                LibraryResult.ScoreResult(score),
+                LibraryResult.BookmarkResult(score, score.bookmarks.single()),
+            ),
+            queryScores(
+                LibraryCatalog(scores = listOf(score)),
+                "  cHoRuS  ",
+                LibrarySort.TITLE,
+                SortDirection.ASCENDING,
+            ),
+        )
+    }
+
+    @Test
+    fun `label match also returns matching bookmark page`() {
+        val score = first.copy(labels = listOf("Chorus"))
+        assertEquals(
+            listOf(
+                LibraryResult.ScoreResult(score),
+                LibraryResult.BookmarkResult(score, score.bookmarks.single()),
+            ),
+            queryScores(
+                LibraryCatalog(scores = listOf(score)),
+                "chorus",
+                LibrarySort.IMPORTED,
+                SortDirection.DESCENDING,
+            ),
+        )
+    }
+
+    @Test
     fun `scores sort by each supported field and direction`() {
         assertEquals(
             listOf(second, first),

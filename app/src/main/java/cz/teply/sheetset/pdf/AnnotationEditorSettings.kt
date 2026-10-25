@@ -134,7 +134,7 @@ object AnnotationEditorSettingsJson {
             presets = root.getJSONArray("presets").presets(version),
             drawOrder = root.getJSONArray("drawOrder").strings(),
             objectOrder = objectOrder,
-            visibleObjectTools = if (version < EDITOR_JSON_VERSION) {
+            visibleObjectTools = if (version == 1 && visibleObjectTools.size > 1) {
                 visibleObjectTools - "lasso"
             } else {
                 visibleObjectTools
@@ -171,19 +171,25 @@ object AnnotationEditorSettingsJson {
         .put("opacity", opacity)
         .put("visible", visible)
 
-    private fun JSONArray.presets(version: Int): List<DrawingPreset> = List(length()) { index ->
-        getJSONObject(index).let { preset ->
-            val id = preset.getString("id")
-            val kind = DrawingPresetKind.valueOf(preset.getString("kind"))
-            DrawingPreset(
-                id = id,
-                kind = kind,
-                color = AnnotationColor.decode(preset.getString("color")),
-                width = preset.getInt("width").migrateWidth(version, kind),
-                opacity = preset.getInt("opacity"),
-                visible = preset.getBoolean("visible") &&
-                    !(version < EDITOR_JSON_VERSION && id in setOf("pen-2", "marker")),
-            )
+    private fun JSONArray.presets(version: Int): List<DrawingPreset> {
+        val presets = List(length()) { index ->
+            getJSONObject(index).let { preset ->
+                val kind = DrawingPresetKind.valueOf(preset.getString("kind"))
+                DrawingPreset(
+                    id = preset.getString("id"),
+                    kind = kind,
+                    color = AnnotationColor.decode(preset.getString("color")),
+                    width = preset.getInt("width").migrateWidth(version, kind),
+                    opacity = preset.getInt("opacity"),
+                    visible = preset.getBoolean("visible"),
+                )
+            }
+        }
+        val duplicateIds = setOf("pen-2", "marker")
+        return if (version == 1 && presets.any { it.visible && it.id !in duplicateIds }) {
+            presets.map { if (it.id in duplicateIds) it.copy(visible = false) else it }
+        } else {
+            presets
         }
     }
 

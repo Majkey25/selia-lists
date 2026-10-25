@@ -24,6 +24,7 @@ import cz.teply.sheetset.ui.nextPosition
 import cz.teply.sheetset.ui.previousPosition
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -50,7 +51,9 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         persistenceMutex = annotationSaveMutex,
         persist = repository::saveAnnotations,
     )
-    private val readerPositionMutex = Mutex()
+    private val libraryMutationMutex = Mutex()
+    private var readerOpenJob: Job? = null
+    private var restoringBackup = false
     private val mutableState = MutableStateFlow(
         LibraryUiState(loading = true, settings = settingsStore.load()),
     )
@@ -90,7 +93,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun addScores(setlistId: String, scoreIds: List<String>) = launchAction {
-        scoreIds.forEach { scoreId -> repository.addScoreToSetlist(setlistId, scoreId) }
+        repository.addScoresToSetlist(setlistId, scoreIds)
     }
 
     fun removeScore(setlistId: String, index: Int) = launchAction {
@@ -102,6 +105,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateSettings(settings: AppSettings) {
+        if (restoringBackup) return
         settingsStore.save(settings)
         mutableState.update { it.copy(settings = settings) }
     }
@@ -151,7 +155,10 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun closeReader() {
-        mutableState.update { it.copy(reader = null) }
+        val opening = readerOpenJob?.isActive == true
+        readerOpenJob?.cancel()
+        readerOpenJob = null
+        mutableState.update { it.copy(reader = null, loading = if (opening) false else it.loading) }
     }
 
     fun nextPage(layout: ReaderLayout) {
@@ -177,6 +184,10 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun applyReaderPosition(reader: ReaderUiState, target: ReaderPosition) {
+        if (restoringBackup) return
+        val opening = readerOpenJob?.isActive == true
+        readerOpenJob?.cancel()
+        readerOpenJob = null
         if (target.scoreIndex == reader.scoreIndex) {
             val viewedAt = System.currentTimeMillis()
             val updatedCatalog = state.value.catalog.saveReaderPosition(
@@ -189,6 +200,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
             mutableState.update {
                 it.copy(
                     catalog = updatedCatalog,
+                    loading = if (opening) false else it.loading,
                     reader = reader.copy(
                         score = updatedScore,
                         pageIndex = target.pageIndex,
@@ -197,7 +209,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
                 )
             }
             viewModelScope.launch {
-                readerPositionMutex.withLock {
+                libraryMutationMutex.withLock {
                     try {
                         repository.saveReaderPosition(
                             reader.score.id,
@@ -227,6 +239,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         pageIndex: Int,
         annotations: DocumentAnnotations,
     ) {
+        if (restoringBackup) return
         val pageAnnotations = annotations.pages[pageIndex].orEmpty()
         mutableState.update { current ->
             current.mergePageAnnotations(scoreId, pageIndex, pageAnnotations)
@@ -249,6 +262,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun exportPdf(uri: Uri) {
+        if (restoringBackup) return
         val reader = state.value.reader ?: return
         viewModelScope.launch {
             mutableState.update { it.copy(loading = true, error = false) }
@@ -274,6 +288,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun createBackup(uri: Uri) {
+        if (restoringBackup) return
         viewModelScope.launch {
             mutableState.update { it.copy(loading = true, error = false) }
             try {
@@ -296,6 +311,7 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun createSharedBackup(onReady: (Uri) -> Unit) {
+        if (restoringBackup) return
         viewModelScope.launch {
             mutableState.update { it.copy(loading = true, error = false) }
             val application = getApplication<Application>()
@@ -317,58 +333,88 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun restoreBackup(uri: Uri) {
+        if (restoringBackup) return
+        restoringBackup = true
+        readerOpenJob?.cancel()
+        readerOpenJob = null
+        mutableState.update { it.copy(loading = true, error = false, reader = null) }
         viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, error = false, reader = null) }
             try {
-                val application = getApplication<Application>()
-                annotationSaves.awaitLatest()
-                val metadata = withContext(Dispatchers.IO) {
-                    val input = application.contentResolver.openInputStream(uri)
-                        ?: throw FileNotFoundException(uri.toString())
-                    input.use { backup -> repository.restoreBackup(backup) }
-                }
-                annotationSaves.discardAll()
-                mutableState.update {
-                    it.copy(
-                        catalog = repository.load(),
-                        loading = false,
-                        settings = metadata?.settings ?: it.settings,
-                    )
-                }
-                metadata?.let {
-                    settingsStore.save(it.settings)
-                    AppLanguages.select(application, it.languageTag)
+                libraryMutationMutex.withLock {
+                    val application = getApplication<Application>()
+                    annotationSaves.awaitLatest()
+                    val metadata = withContext(Dispatchers.IO) {
+                        val input = application.contentResolver.openInputStream(uri)
+                            ?: throw FileNotFoundException(uri.toString())
+                        input.use { backup -> repository.restoreBackup(backup) }
+                    }
+                    annotationSaves.discardAll()
+                    val catalog = repository.load()
+                    mutableState.update {
+                        it.copy(
+                            catalog = catalog,
+                            reader = null,
+                            loading = false,
+                            settings = metadata?.settings ?: it.settings,
+                        )
+                    }
+                    metadata?.let {
+                        settingsStore.save(it.settings)
+                        AppLanguages.select(application, it.languageTag)
+                    }
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
                 mutableState.update { it.copy(loading = false, error = true) }
+            } finally {
+                restoringBackup = false
             }
         }
     }
 
     private fun launchAction(action: suspend () -> Unit) {
+        if (restoringBackup) return
         viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, error = false) }
-            try {
-                action()
-                val catalog = repository.load()
-                mutableState.update {
-                    val reader = it.reader?.let { current ->
-                        catalog.scores.firstOrNull { score -> score.id == current.score.id }
-                            ?.let { score -> current.copy(score = score) }
+            libraryMutationMutex.withLock {
+                mutableState.update { it.copy(loading = true, error = false) }
+                try {
+                    val failed = try {
+                        action()
+                        false
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        true
                     }
-                    it.copy(
-                        catalog = catalog,
-                        reader = reader,
-                        loading = false,
-                        error = false,
-                    )
+                    val catalog = repository.load()
+                    mutableState.update {
+                        // Catalog edits leave positions unchanged; queued page saves may be newer.
+                        val localScores = it.catalog.scores.associateBy(Score::id)
+                        val updatedCatalog = catalog.copy(scores = catalog.scores.map { score ->
+                            val local = localScores[score.id] ?: return@map score
+                            score.copy(
+                                lastPageIndex = local.lastPageIndex,
+                                lastPagePart = local.lastPagePart,
+                                lastViewedAtEpochMs = local.lastViewedAtEpochMs,
+                            )
+                        })
+                        val reader = it.reader?.let { current ->
+                            updatedCatalog.scores.firstOrNull { score -> score.id == current.score.id }
+                                ?.let { score -> current.copy(score = score) }
+                        }
+                        it.copy(
+                            catalog = updatedCatalog,
+                            reader = reader,
+                            loading = restoringBackup,
+                            error = failed,
+                        )
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    mutableState.update { it.copy(loading = restoringBackup, error = true) }
                 }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                mutableState.update { it.copy(loading = false, error = true) }
             }
         }
     }
@@ -379,38 +425,44 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         pageIndex: Int,
         pagePart: Int,
     ) {
+        if (restoringBackup) return
         val scoreId = scoreIds.getOrNull(scoreIndex) ?: return
-        viewModelScope.launch {
+        readerOpenJob?.cancel()
+        readerOpenJob = viewModelScope.launch {
             mutableState.update { it.copy(loading = true, error = false) }
             try {
                 val score = state.value.catalog.scores.firstOrNull { it.id == scoreId }
                     ?: throw IllegalArgumentException("Score does not exist")
                 val file = withContext(Dispatchers.IO) { repository.pdfFile(score) }
                 val annotations = annotationSaveMutex.withLock {
-                    repository.loadAnnotations(score.id)
+                    annotationSaves.pendingAnnotations(score.id) ?: repository.loadAnnotations(score.id)
                 }
-                repository.saveReaderPosition(
-                    score.id,
-                    page = pageIndex,
-                    part = pagePart,
-                    viewedAt = System.currentTimeMillis(),
-                )
-                val catalog = repository.load()
-                val savedScore = catalog.scores.first { it.id == score.id }
-                mutableState.update {
-                    it.copy(
-                        catalog = catalog,
-                        loading = false,
-                        reader = ReaderUiState(
-                            score = savedScore,
-                            file = file,
-                            scoreIds = scoreIds,
-                            scoreIndex = scoreIndex,
-                            pageIndex = pageIndex,
-                            pagePart = pagePart,
-                            annotations = annotations,
-                        ),
+                libraryMutationMutex.withLock {
+                    repository.saveReaderPosition(
+                        score.id,
+                        page = pageIndex,
+                        part = pagePart,
+                        viewedAt = System.currentTimeMillis(),
                     )
+                    val catalog = repository.load()
+                    val savedScore = catalog.scores.first { it.id == score.id }
+                    val pendingAnnotations = annotationSaves.pendingAnnotations(score.id)
+                    mutableState.update {
+                        it.copy(
+                            catalog = catalog,
+                            loading = false,
+                            reader = ReaderUiState(
+                                score = savedScore,
+                                file = file,
+                                scoreIds = scoreIds,
+                                scoreIndex = scoreIndex,
+                                pageIndex = pageIndex,
+                                pagePart = pagePart,
+                                annotations = it.reader?.takeIf { reader -> reader.score.id == score.id }?.annotations
+                                    ?: pendingAnnotations ?: annotations,
+                            ),
+                        )
+                    }
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -424,25 +476,37 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         application: Application,
         settings: AppSettings,
         languageTag: String?,
-    ): Uri {
+    ): Uri = sharedBackupMutex.withLock {
         val directory = File(application.cacheDir, "shared-backups")
-        val temporary = File(directory, ".SheetSet-Backup.tmp")
-        try {
-            if (!directory.exists() && !directory.mkdirs()) {
-                throw IllegalStateException("Could not create share directory")
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw IllegalStateException("Could not create share directory")
+        }
+        val files = directory.listFiles().orEmpty().filter(File::isFile)
+        val oldestAllowed = System.currentTimeMillis() - SHARED_BACKUP_MAX_AGE_MS
+        files.filter { it.name.startsWith("SheetSet-Backup") && it.extension == "zip" }
+            .sortedByDescending(File::lastModified)
+            .forEachIndexed { index, file ->
+                if (index >= MAX_SHARED_BACKUPS - 1 || file.lastModified() < oldestAllowed) {
+                    if (!file.delete()) throw IllegalStateException("Could not remove old shared backup")
+                }
             }
-            temporary.delete()
+        files.filter { it.name.startsWith(".SheetSet-Backup") && it.extension == "tmp" }
+            .forEach { file ->
+                if (!file.delete()) throw IllegalStateException("Could not remove unfinished shared backup")
+            }
+        val temporary = File.createTempFile(".SheetSet-Backup-", ".tmp", directory)
+        try {
             FileOutputStream(temporary).use { output ->
                 repository.createBackup(output, settings, languageTag)
             }
-            val destination = File(directory, "SheetSet-Backup.zip")
-            if (destination.exists() && !destination.delete()) {
-                throw IllegalStateException("Could not replace shared backup")
-            }
+            val destination = File(
+                directory,
+                temporary.name.removePrefix(".").removeSuffix(".tmp") + ".zip",
+            )
             if (!temporary.renameTo(destination)) {
                 throw IllegalStateException("Could not prepare shared backup")
             }
-            return FileProvider.getUriForFile(
+            FileProvider.getUriForFile(
                 application,
                 "${application.packageName}.files",
                 destination,
@@ -450,6 +514,13 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         } finally {
             temporary.delete()
         }
+    }
+
+    private companion object {
+        // Cache cleanup must not delete another ViewModel's unfinished export.
+        val sharedBackupMutex = Mutex()
+        const val MAX_SHARED_BACKUPS = 3
+        const val SHARED_BACKUP_MAX_AGE_MS = 24L * 60L * 60L * 1_000L
     }
 
     private suspend fun pdfImport(uri: Uri): PdfImport = withContext(Dispatchers.IO) {

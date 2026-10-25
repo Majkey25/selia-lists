@@ -1,6 +1,6 @@
 # Google Play Console publication worksheet
 
-Use these answers only for the verified SeliaLists `0.5.0-alpha.9` closed-test AAB. Re-audit the artifact if the manifest, dependencies, external links, or data handling change.
+Use these answers for the SeliaLists `0.5.0-alpha.12` closed-test AAB after artifact verification. Re-audit the artifact if the manifest, dependencies, external links, or data handling change.
 
 ## App identity
 
@@ -8,15 +8,15 @@ Use these answers only for the verified SeliaLists `0.5.0-alpha.9` closed-test A
 |---|---|
 | App name | `SeliaLists` |
 | Package | `com.majkeylab.sheetset` |
-| Version code | `14` |
-| Version name | `0.5.0-alpha.9` |
+| Version code | `17` |
+| Version name | `0.5.0-alpha.12` |
 | Default language | English (United States) |
 | App or game | App |
 | Category | Music & Audio |
 | Free or paid | Free |
 | Contact email | `majkeylab@gmail.com` |
-| Website | `https://majkey25.github.io/SheetSet/` |
-| Privacy policy | `https://majkey25.github.io/SheetSet/privacy.html` |
+| Website | `https://majkey25.github.io/selia-lists/` |
+| Privacy policy | `https://majkey25.github.io/selia-lists/privacy.html` |
 | Ads | No |
 
 Use the verified legal name, address, phone, and account type already stored in the Play developer account. Do not invent or copy those values into the repository.
@@ -101,11 +101,11 @@ Use the verified legal name, address, phone, and account type already stored in 
 
 ### English
 
-> Replaced annotation width buttons with a six-step slider and live preview. Drawing tools now share the full thin-to-wide range. Setlist dragging is smoother, scales the whole row consistently, and keeps repeated PDFs independently reorderable.
+> Improved backup and deletion recovery, annotation saving, selection, erasing, two-finger zoom, and PDF export. Fixed setlist dragging, search, accessibility, and restoration of unfinished dialogs. Updated repository and privacy links.
 
 ### Čeština
 
-> Tlačítka šířky anotací nahradil šestistupňový posuvník s živým náhledem. Kreslicí nástroje sdílejí celý rozsah od tenké po širokou stopu. Přesouvání skladeb v setlistu je plynulejší, škáluje celý řádek a umožňuje samostatně řadit opakovaná PDF.
+> Vylepšená obnova záloh a přerušeného mazání, ukládání a výběr anotací, guma, přiblížení dvěma prsty a export PDF. Opravené přetahování setlistů, hledání, přístupnost a obnova rozpracovaných dialogů. Aktualizované odkazy na repozitář a zásady soukromí.
 
 ## App content
 
@@ -165,9 +165,9 @@ Alt text:
 
 ## Submission gate
 
-- [ ] User accepts the visible emulator build.
+- [ ] Verify the connected physical test phone; do not use an emulator for this release.
 - [ ] Signed AAB package/version/certificate/permissions are verified.
-- [ ] Unit, lint, build, API 29, and API 35 checks pass.
+- [ ] Unit, lint, build, and physical-device checks pass; record the tested Android API level.
 - [ ] GitHub Pages root and Privacy policy return HTTP 200 over HTTPS.
 - [ ] Store text and screenshots match the exact submitted AAB.
 - [ ] Play App Signing is enabled and the verified AAB is uploaded only to Closed testing.

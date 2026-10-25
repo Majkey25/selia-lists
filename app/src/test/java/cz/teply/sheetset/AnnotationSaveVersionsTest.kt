@@ -165,6 +165,7 @@ class AnnotationSaveVersionsTest {
         }
         coordinator.enqueue("score-a", 0, listOf(ink("durable")), DocumentAnnotations())
         coordinator.awaitLatest()
+        assertNull(coordinator.pendingAnnotations("score-a"))
 
         val nextOrigin = DocumentAnnotations(mapOf(1 to listOf(ink("next"))))
         coordinator.enqueue("score-a", 1, listOf(ink("next")), nextOrigin)
@@ -183,6 +184,7 @@ class AnnotationSaveVersionsTest {
             persisted[scoreId] = annotations
         }
         coordinator.enqueue("score-a", 0, listOf(ink("failed-page")), DocumentAnnotations()).join()
+        assertEquals(listOf("failed-page"), coordinator.pendingAnnotations("score-a")?.pageIds(0))
 
         val nextOrigin = DocumentAnnotations(mapOf(1 to listOf(ink("next-page"))))
         coordinator.enqueue("score-a", 1, listOf(ink("next-page")), nextOrigin)
@@ -190,6 +192,7 @@ class AnnotationSaveVersionsTest {
 
         assertEquals(listOf("failed-page"), persisted.getValue("score-a").pageIds(0))
         assertEquals(listOf("next-page"), persisted.getValue("score-a").pageIds(1))
+        assertNull(coordinator.pendingAnnotations("score-a"))
     }
 
     @Test

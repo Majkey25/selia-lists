@@ -2,18 +2,42 @@ package cz.teply.sheetset.data
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigDecimal
 
 const val MAX_TITLE_LENGTH = 120
 const val MAX_BOOKMARKS = 1_000
 const val MAX_LABELS = 20
 const val MAX_LABEL_LENGTH = 40
+private const val MAX_SAFE_DOUBLE_INTEGER = 9_007_199_254_740_991.0
+
+internal fun JSONObject.requiredLong(key: String): Long {
+    val value = opt(key)
+    require(value is Number) { "Invalid integer: $key" }
+    // shortcut: Android JSON already rounds decimals; token-level validation needs a preserving parser.
+    if (value is Double || value is Float) {
+        require(value.toDouble() in -MAX_SAFE_DOUBLE_INTEGER..MAX_SAFE_DOUBLE_INTEGER) {
+            "Invalid integer: $key"
+        }
+    }
+    return try {
+        BigDecimal(value.toString()).longValueExact()
+    } catch (error: ArithmeticException) {
+        throw IllegalArgumentException("Invalid integer: $key", error)
+    }
+}
+
+internal fun JSONObject.requiredInt(key: String): Int {
+    val value = requiredLong(key)
+    require(value in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) { "Invalid integer: $key" }
+    return value.toInt()
+}
 
 private fun cleanTitle(value: String): String = value.trim().take(MAX_TITLE_LENGTH).also {
     require(it.isNotEmpty()) { "Title must not be blank" }
 }
 
 internal fun normalizeLabels(values: List<String>): List<String> = values
-    .map { it.trim().take(MAX_LABEL_LENGTH) }
+    .map { it.trim().take(MAX_LABEL_LENGTH).trimEnd() }
     .filter(String::isNotEmpty)
     .distinct()
     .take(MAX_LABELS)
@@ -257,7 +281,7 @@ object CatalogJson {
 
     fun decode(raw: String): LibraryCatalog {
         val root = JSONObject(raw)
-        val version = root.getInt("version")
+        val version = root.requiredInt("version")
         require(version in 1..VERSION) { "Unsupported catalog version" }
         val scoresJson = root.getJSONArray("scores")
         val scores = List(scoresJson.length()) { index ->
@@ -265,6 +289,9 @@ object CatalogJson {
         }
         require(scores.map(Score::id).distinct().size == scores.size) {
             "Duplicate score ID"
+        }
+        require(scores.map(Score::fileName).distinct().size == scores.size) {
+            "Duplicate score file name"
         }
         val setlistsJson = root.getJSONArray("setlists")
         val setlists = List(setlistsJson.length()) { index ->
@@ -284,15 +311,14 @@ object CatalogJson {
         val id = getString("id")
         val title = getString("title")
         val fileName = getString("fileName")
-        val pageCount = getInt("pageCount")
-        val importedAt = getLong("importedAtEpochMs")
-        require(id.isNotBlank()) { "Score ID must not be blank" }
+        val pageCount = requiredInt("pageCount")
+        val importedAt = requiredLong("importedAtEpochMs")
+        require(id.matches(Regex("[A-Za-z0-9-]+"))) { "Invalid score ID" }
         require(title.isNotBlank() && title.length <= MAX_TITLE_LENGTH) { "Invalid score title" }
         require(fileName.matches(Regex("[A-Za-z0-9-]+\\.pdf"))) { "Invalid score file name" }
         require(pageCount > 0) { "Page count must be positive" }
         require(importedAt >= 0) { "Import time must not be negative" }
-        val labels = if (version >= 2) getJSONArray("labels").toStrings() else emptyList()
-        require(normalizeLabels(labels) == labels) { "Invalid score labels" }
+        val labels = if (version >= 2) getJSONArray("labels").toLabels("Invalid score labels") else emptyList()
         val bookmarks = if (version >= 2) {
             val values = getJSONArray("bookmarks")
             List(values.length()) { index -> values.getJSONObject(index).toBookmark(pageCount) }
@@ -303,9 +329,9 @@ object CatalogJson {
         require(bookmarks.map(Bookmark::id).distinct().size == bookmarks.size) {
             "Duplicate bookmark ID"
         }
-        val lastPageIndex = if (version >= 2) getInt("lastPageIndex") else 0
-        val lastPagePart = if (version >= 2) getInt("lastPagePart") else 0
-        val lastViewedAt = if (version >= 2) getLong("lastViewedAtEpochMs") else 0L
+        val lastPageIndex = if (version >= 2) requiredInt("lastPageIndex") else 0
+        val lastPagePart = if (version >= 2) requiredInt("lastPagePart") else 0
+        val lastViewedAt = if (version >= 2) requiredLong("lastViewedAtEpochMs") else 0L
         require(lastPageIndex in 0 until pageCount) { "Invalid saved page" }
         require(lastPagePart in 0..1) { "Invalid saved page part" }
         require(lastViewedAt >= 0) { "Invalid last viewed time" }
@@ -329,9 +355,8 @@ object CatalogJson {
         val scoreIdsJson = getJSONArray("scoreIds")
         require(id.isNotBlank()) { "Setlist ID must not be blank" }
         require(name.isNotBlank() && name.length <= MAX_TITLE_LENGTH) { "Invalid setlist name" }
-        val labels = if (version >= 2) getJSONArray("labels").toStrings() else emptyList()
-        require(normalizeLabels(labels) == labels) { "Invalid setlist labels" }
-        val createdAt = if (version >= 2) getLong("createdAtEpochMs") else 0L
+        val labels = if (version >= 2) getJSONArray("labels").toLabels("Invalid setlist labels") else emptyList()
+        val createdAt = if (version >= 2) requiredLong("createdAtEpochMs") else 0L
         require(createdAt >= 0) { "Invalid setlist creation time" }
         return Setlist(
             id = id,
@@ -345,12 +370,19 @@ object CatalogJson {
     private fun JSONObject.toBookmark(pageCount: Int): Bookmark {
         val id = getString("id")
         val title = getString("title")
-        val pageIndex = getInt("pageIndex")
+        val pageIndex = requiredInt("pageIndex")
         require(id.matches(Regex("[A-Za-z0-9-]+"))) { "Invalid bookmark ID" }
         require(title.isNotBlank() && title.length <= MAX_TITLE_LENGTH) { "Invalid bookmark title" }
         require(pageIndex in 0 until pageCount) { "Invalid bookmark page" }
         return Bookmark(id, title, pageIndex)
     }
 
-    private fun JSONArray.toStrings(): List<String> = List(length(), ::getString)
+    private fun JSONArray.toLabels(errorMessage: String): List<String> {
+        val labels = List(length(), ::getString)
+        require(labels.size <= MAX_LABELS && labels.distinct().size == labels.size) { errorMessage }
+        // Older versions could leave trailing whitespace at the truncation limit.
+        val recovered = labels.map { if (it.length == MAX_LABEL_LENGTH) it.trimEnd() else it }
+        require(recovered.all { it.isNotEmpty() && it == it.trim().take(MAX_LABEL_LENGTH) }) { errorMessage }
+        return recovered.distinct()
+    }
 }

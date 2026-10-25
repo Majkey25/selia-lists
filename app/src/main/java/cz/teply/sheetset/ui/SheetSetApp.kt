@@ -40,11 +40,13 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cz.teply.sheetset.LibraryUiState
 import cz.teply.sheetset.R
+import cz.teply.sheetset.data.MAX_TITLE_LENGTH
 import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.pdf.DocumentAnnotations
 import cz.teply.sheetset.settings.AppSettings
@@ -102,6 +105,27 @@ fun SheetSetApp(
     actions: SheetSetActions,
     windowLayout: WindowLayout = WindowLayout.COMPACT,
 ) {
+    val errorMessage = stringResource(R.string.action_failed)
+    val snackbarHost = remember { SnackbarHostState() }
+    LaunchedEffect(state.error) {
+        if (state.error) snackbarHost.showSnackbar(errorMessage)
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        SheetSetContent(state, actions, windowLayout)
+        SnackbarHost(
+            hostState = snackbarHost,
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding(),
+        )
+    }
+}
+
+@Composable
+private fun SheetSetContent(
+    state: LibraryUiState,
+    actions: SheetSetActions,
+    windowLayout: WindowLayout,
+) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var activeSetlistId by rememberSaveable { mutableStateOf<String?>(null) }
     var createSetlist by rememberSaveable { mutableStateOf(false) }
@@ -109,6 +133,7 @@ fun SheetSetApp(
     var importOptions by rememberSaveable { mutableStateOf(false) }
     var pendingRestore by rememberSaveable { mutableStateOf<Uri?>(null) }
     var setlistName by rememberSaveable { mutableStateOf("") }
+    val libraryState = rememberSaveableStateHolder()
     val context = LocalContext.current
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -122,16 +147,10 @@ fun SheetSetApp(
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> pendingRestore = uri }
-    val errorMessage = stringResource(R.string.action_failed)
-    val snackbarHost = remember { SnackbarHostState() }
     val activeSetlist = state.catalog.setlists.firstOrNull { it.id == activeSetlistId }
     val closeCreateDialog = {
         setlistName = ""
         createSetlist = false
-    }
-
-    LaunchedEffect(state.error) {
-        if (state.error) snackbarHost.showSnackbar(errorMessage)
     }
 
     BackHandler {
@@ -143,11 +162,13 @@ fun SheetSetApp(
     }
 
     state.reader?.let { reader ->
-        ReaderScreen(reader, state.settings, windowLayout, actions)
+        key(reader.score.id) {
+            ReaderScreen(reader, state.settings, windowLayout, actions)
+        }
         return
     }
 
-    if (activeSetlist != null && windowLayout != WindowLayout.EXPANDED) {
+    if (selectedTab == 1 && activeSetlist != null && windowLayout != WindowLayout.EXPANDED) {
         SetlistDetail(
             setlist = activeSetlist,
             scores = state.catalog.scores,
@@ -192,7 +213,6 @@ fun SheetSetApp(
                     if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             },
-            snackbarHost = { SnackbarHost(snackbarHost) },
             bottomBar = {
                 if (windowLayout == WindowLayout.COMPACT) {
                     SheetNavigation(
@@ -228,17 +248,19 @@ fun SheetSetApp(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         contentAlignment = Alignment.TopCenter,
                     ) {
-                        LibraryScreen(
-                            scores = state.catalog.scores,
-                            onOpen = actions.openScore,
-                            onOpenBookmark = actions.openScoreAt,
-                            onRename = actions.renameScore,
-                            onDelete = actions.deleteScore,
-                            onLabels = actions.updateScoreLabels,
-                            searching = librarySearching,
-                            onSearchingChange = { librarySearching = it },
-                            modifier = Modifier.widthIn(max = 720.dp).fillMaxHeight(),
-                        )
+                        libraryState.SaveableStateProvider("library") {
+                            LibraryScreen(
+                                scores = state.catalog.scores,
+                                onOpen = actions.openScore,
+                                onOpenBookmark = actions.openScoreAt,
+                                onRename = actions.renameScore,
+                                onDelete = actions.deleteScore,
+                                onLabels = actions.updateScoreLabels,
+                                searching = librarySearching,
+                                onSearchingChange = { librarySearching = it },
+                                modifier = Modifier.widthIn(max = 720.dp).fillMaxHeight(),
+                            )
+                        }
                     }
                 } else if (windowLayout == WindowLayout.EXPANDED) {
                     SetlistsScreen(
@@ -297,7 +319,7 @@ fun SheetSetApp(
             text = {
                 OutlinedTextField(
                     value = setlistName,
-                    onValueChange = { setlistName = it },
+                    onValueChange = { setlistName = it.take(MAX_TITLE_LENGTH) },
                     label = { Text(stringResource(R.string.setlist_name)) },
                     singleLine = true,
                 )

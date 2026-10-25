@@ -2,8 +2,8 @@
 
 Offline Android PDF organizer for musicians. Import scores, build unlimited setlists, write annotations, and export a marked-up copy. No account, ads, analytics, cloud service, or Internet permission.
 
-[![Android CI](https://github.com/Majkey25/SheetSet/actions/workflows/android-ci.yml/badge.svg)](https://github.com/Majkey25/SheetSet/actions/workflows/android-ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/Majkey25/SheetSet?include_prereleases)](https://github.com/Majkey25/SheetSet/releases)
+[![Android CI](https://github.com/Majkey25/selia-lists/actions/workflows/android-ci.yml/badge.svg)](https://github.com/Majkey25/selia-lists/actions/workflows/android-ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Majkey25/selia-lists?include_prereleases)](https://github.com/Majkey25/selia-lists/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-111111.svg)](LICENSE)
 ![Android 10+](https://img.shields.io/badge/Android-10%2B-111111.svg)
 ![Offline only](https://img.shields.io/badge/offline-only-111111.svg)
@@ -36,7 +36,7 @@ Offline Android PDF organizer for musicians. Import scores, build unlimited setl
 
 ## Install
 
-Download test builds from [GitHub Releases](https://github.com/Majkey25/SheetSet/releases). Google Play closed-test builds use the same source and the Play Console preparation documented in this repository.
+Download test builds from [GitHub Releases](https://github.com/Majkey25/selia-lists/releases). Google Play closed-test builds use the same source and the Play Console preparation documented in this repository.
 
 SeliaLists requires Android 10 or newer.
 
@@ -76,7 +76,7 @@ The [v0.4 performance specification](docs/superpowers/specs/2026-08-24-sheetset-
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems through [GitHub private vulnerability reporting](https://github.com/Majkey25/SheetSet/security/advisories/new).
+Read [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems through [GitHub private vulnerability reporting](https://github.com/Majkey25/selia-lists/security/advisories/new).
 
 ## License
 

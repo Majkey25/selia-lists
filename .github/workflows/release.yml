@@ -22,15 +22,15 @@ jobs:
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon --console=plain
       - name: Prepare assets
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk "sheetset-${GITHUB_REF_NAME}-debug.apk"
-          sha256sum "sheetset-${GITHUB_REF_NAME}-debug.apk" > "sheetset-${GITHUB_REF_NAME}-debug.apk.sha256"
+          cp app/build/outputs/apk/debug/app-debug.apk "selia-lists-${GITHUB_REF_NAME}-debug.apk"
+          sha256sum "selia-lists-${GITHUB_REF_NAME}-debug.apk" > "selia-lists-${GITHUB_REF_NAME}-debug.apk.sha256"
       - name: Publish prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME"
-          "sheetset-${GITHUB_REF_NAME}-debug.apk"
-          "sheetset-${GITHUB_REF_NAME}-debug.apk.sha256"
+          "selia-lists-${GITHUB_REF_NAME}-debug.apk"
+          "selia-lists-${GITHUB_REF_NAME}-debug.apk.sha256"
           --prerelease
           --generate-notes
-          --title "SheetSet $GITHUB_REF_NAME"
+          --title "SeliaLists $GITHUB_REF_NAME"

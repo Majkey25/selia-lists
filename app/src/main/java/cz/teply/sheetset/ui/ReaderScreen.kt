@@ -11,6 +11,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,10 +39,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,6 +99,13 @@ import kotlin.math.roundToInt
 
 internal const val PDF_PAGE_TEST_TAG = "pdf-page"
 
+private val textBoundsSaver = listSaver<NormalizedRect?, Float>(
+    save = { bounds -> bounds?.let { listOf(it.left, it.top, it.right, it.bottom) }.orEmpty() },
+    restore = { values ->
+        if (values.isEmpty()) null else NormalizedRect(values[0], values[1], values[2], values[3])
+    },
+)
+
 internal class EditorSettingsState(initial: AnnotationEditorSettings) {
     var current by mutableStateOf(initial)
         private set
@@ -132,16 +145,24 @@ fun ReaderScreen(
     var objectOpacity by remember(reader.score.id) { mutableIntStateOf(255) }
     var objectWidth by remember(reader.score.id) { mutableIntStateOf(2) }
     var straightLine by remember(reader.score.id) { mutableStateOf(false) }
-    var textBounds by remember { mutableStateOf<NormalizedRect?>(null) }
-    var editingText by remember { mutableStateOf<TextBoxAnnotation?>(null) }
+    var textBounds by key(reader.score.id, reader.pageIndex) {
+        rememberSaveable(stateSaver = textBoundsSaver) { mutableStateOf<NormalizedRect?>(null) }
+    }
+    var editingTextId by key(reader.score.id, reader.pageIndex) {
+        rememberSaveable { mutableStateOf<String?>(null) }
+    }
     var symbolPoint by remember { mutableStateOf<NormalizedPoint?>(null) }
     var selectedSymbolId by remember { mutableStateOf("sharp") }
     var colorPanelOpen by remember { mutableStateOf(false) }
     var pageView by remember { mutableStateOf<PdfPageView?>(null) }
-    var readerPanel by remember { mutableStateOf<ReaderPanel?>(null) }
+    var readerPanel by rememberSaveable(reader.score.id) { mutableStateOf<ReaderPanel?>(null) }
     var history by remember(reader.score.id, reader.pageIndex) {
         mutableStateOf(AnnotationHistory(reader.annotations.pages[reader.pageIndex].orEmpty()))
     }
+    val editingText = history.annotations.firstOrNull { it.id == editingTextId } as? TextBoxAnnotation
+    val sliderInteractionSource = remember { MutableInteractionSource() }
+    val sliderDragging by sliderInteractionSource.collectIsDraggedAsState()
+    val sliderPressed by sliderInteractionSource.collectIsPressedAsState()
     val platformView = LocalView.current
     val readerFocusRequester = remember { FocusRequester() }
     val exportLauncher = rememberLauncherForActivityResult(
@@ -182,8 +203,8 @@ fun ReaderScreen(
     LaunchedEffect(reader.score.id) {
         readerFocusRequester.requestFocus()
     }
-    LaunchedEffect(autoHideRequest, settings.autoHideControls) {
-        if (autoHideRequest > 0 && settings.autoHideControls) {
+    LaunchedEffect(autoHideRequest, settings.autoHideControls, sliderDragging, sliderPressed) {
+        if (autoHideRequest > 0 && settings.autoHideControls && !sliderDragging && !sliderPressed) {
             delay(1_500)
             if (tool == ReaderTool.VIEW && controlsVisible) controlsVisible = false
         }
@@ -290,20 +311,17 @@ fun ReaderScreen(
     Box(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)
             .focusRequester(readerFocusRequester).focusable().onPreviewKeyEvent { event ->
-            if (event.type != KeyEventType.KeyDown) {
+            val direction = pedalDirection(event.nativeKeyEvent.keyCode, repeatCount = 0)
+            if (direction == null || textBounds != null || readerPanel != null || colorPanelOpen || symbolPoint != null) {
                 false
             } else {
-                when (pedalDirection(event.nativeKeyEvent.keyCode, event.nativeKeyEvent.repeatCount)) {
-                    PageDirection.PREVIOUS -> {
-                        actions.previousPage(effectiveLayout)
-                        true
+                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                    when (direction) {
+                        PageDirection.PREVIOUS -> actions.previousPage(effectiveLayout)
+                        PageDirection.NEXT -> actions.nextPage(effectiveLayout)
                     }
-                    PageDirection.NEXT -> {
-                        actions.nextPage(effectiveLayout)
-                        true
-                    }
-                    null -> false
                 }
+                true
             }
         },
     ) {
@@ -341,7 +359,10 @@ fun ReaderScreen(
                 } else {
                     settings.pageFit
                 }
-                view.setHalfPagePart(if (effectiveLayout == ReaderLayout.HALF) reader.pagePart else 0)
+                view.setHalfPagePart(
+                    if (effectiveLayout == ReaderLayout.HALF) reader.pagePart else 0,
+                    halfPageMode = effectiveLayout == ReaderLayout.HALF,
+                )
                 view.pageTurnTaps = settings.pageTurnTaps
                 view.pageTurnSwipes = settings.pageTurnSwipes
                 view.onPreviousPage = {
@@ -364,7 +385,7 @@ fun ReaderScreen(
                     updateHistory(history.commit(history.annotations.filterNot { it.id in ids }))
                 }
                 view.onRequestText = { bounds ->
-                    editingText = null
+                    editingTextId = null
                     textBounds = bounds
                 }
                 view.onRequestSymbol = { point ->
@@ -384,6 +405,9 @@ fun ReaderScreen(
                             opacity = currentOpacity,
                         ),
                     )
+                }
+                view.onRenderError = {
+                    Toast.makeText(view.context, actionFailed, Toast.LENGTH_SHORT).show()
                 }
                 view.showPage(reader.file, reader.pageIndex)
                 },
@@ -420,12 +444,13 @@ fun ReaderScreen(
                     onNext = { actions.nextPage(effectiveLayout) },
                     onJump = actions.jumpToPage,
                     onPanel = { readerPanel = it },
+                    sliderInteractionSource = sliderInteractionSource,
                 ) {
                     val restored = editor.resolveVisibleSelection(lastEditorTool, activePresetId)
                     lastEditorTool = restored.tool
                     activePresetId = restored.preset.id
                     tool = restored.tool
-                    group = if (restored.tool in setOf(ReaderTool.PEN, ReaderTool.HIGHLIGHTER)) {
+                    group = if (restored.tool in setOf(ReaderTool.PEN, ReaderTool.HIGHLIGHTER, ReaderTool.ERASER)) {
                         AnnotationToolGroup.DRAW
                     } else {
                         AnnotationToolGroup.OBJECTS
@@ -477,8 +502,9 @@ fun ReaderScreen(
                     onEyedropper = { pageView?.startEyedropper() },
                     onStraightLine = { straightLine = !straightLine },
                     onEditText = {
-                        editingText = selectedAnnotation as? TextBoxAnnotation
-                        textBounds = editingText?.bounds
+                        val text = selectedAnnotation as? TextBoxAnnotation
+                        editingTextId = text?.id
+                        textBounds = text?.bounds
                     },
                     onDuplicate = duplicate@{
                         val before = history.annotations
@@ -574,30 +600,32 @@ fun ReaderScreen(
         )
     }
 
-    textBounds?.let { bounds ->
-        TextAnnotationDialog(
-            initial = editingText,
-            bounds = bounds,
-            defaultSize = settings.textSize,
-            defaultColor = objectColor,
-            defaultOpacity = objectOpacity,
-            quickColors = editor.quickColors,
-            recentColors = editor.recentColors,
-            onDismiss = {
-                textBounds = null
-                editingText = null
-            },
-            onConfirm = { annotation ->
-                if (editingText == null) {
-                    addAnnotation(annotation)
-                } else {
-                    updateHistory(history.update(annotation))
-                }
-                saveRecentColor(annotation.color)
-                textBounds = null
-                editingText = null
-            },
-        )
+    key(reader.score.id, reader.pageIndex) {
+        textBounds?.let { bounds ->
+            TextAnnotationDialog(
+                initial = editingText,
+                bounds = bounds,
+                defaultSize = settings.textSize,
+                defaultColor = objectColor,
+                defaultOpacity = objectOpacity,
+                quickColors = editor.quickColors,
+                recentColors = editor.recentColors,
+                onDismiss = {
+                    textBounds = null
+                    editingTextId = null
+                },
+                onConfirm = { annotation ->
+                    if (editingText == null) {
+                        addAnnotation(annotation)
+                    } else {
+                        updateHistory(history.update(annotation))
+                    }
+                    saveRecentColor(annotation.color)
+                    textBounds = null
+                    editingTextId = null
+                },
+            )
+        }
     }
 
     symbolPoint?.let { point ->
@@ -630,6 +658,7 @@ private fun TwoPageReader(
     actions: SheetSetActions,
     onToggleControls: () -> Unit,
 ) {
+    val actionFailed = stringResource(R.string.action_failed)
     val pages = spreadPages(
         ReaderPosition(reader.scoreIndex, reader.pageIndex, reader.pagePart),
         reader.score.pageCount,
@@ -652,6 +681,9 @@ private fun TwoPageReader(
                     view.onPreviousPage = { actions.previousPage(ReaderLayout.TWO_PAGE) }
                     view.onNextPage = { actions.nextPage(ReaderLayout.TWO_PAGE) }
                     view.onPageClick = onToggleControls
+                    view.onRenderError = {
+                        Toast.makeText(view.context, actionFailed, Toast.LENGTH_SHORT).show()
+                    }
                     view.showPage(reader.file, pageIndex)
                 },
             )
@@ -722,10 +754,14 @@ private fun ReaderNavigationBar(
     onNext: () -> Unit,
     onJump: (Int) -> Unit,
     onPanel: (ReaderPanel) -> Unit,
+    sliderInteractionSource: MutableInteractionSource,
     onAnnotate: () -> Unit,
 ) {
-    val previousEnabled = reader.scoreIndex > 0 || reader.pageIndex > 0 ||
-        (layout == ReaderLayout.HALF && reader.pagePart == 1)
+    val previousEnabled = reader.scoreIndex > 0 || when (layout) {
+        ReaderLayout.SINGLE -> reader.pageIndex > 0
+        ReaderLayout.HALF -> reader.pageIndex > 0 || reader.pagePart == 1
+        ReaderLayout.TWO_PAGE -> reader.pageIndex - reader.pageIndex % 2 > 0
+    }
     val nextEnabled = reader.scoreIndex < reader.scoreIds.lastIndex || when (layout) {
         ReaderLayout.SINGLE -> reader.pageIndex < reader.score.pageCount - 1
         ReaderLayout.HALF -> reader.pagePart == 0 || reader.pageIndex < reader.score.pageCount - 1
@@ -758,6 +794,7 @@ private fun ReaderNavigationBar(
                     valueRange = 0f..maxPage.coerceAtLeast(1).toFloat(),
                     steps = (maxPage - 1).coerceAtLeast(0),
                     enabled = maxPage > 0,
+                    interactionSource = sliderInteractionSource,
                     modifier = Modifier.weight(1f).semantics {
                         contentDescription = positionLabel
                     },
