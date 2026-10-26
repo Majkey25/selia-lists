@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -43,8 +44,12 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -64,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import cz.teply.sheetset.R
+import cz.teply.sheetset.data.MAX_TITLE_LENGTH
 import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.data.Setlist
 import kotlinx.coroutines.Job
@@ -150,7 +156,7 @@ fun SetlistsScreen(
                 OutlinedTextField(
                     modifier = Modifier.weight(1f),
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = { query = it.take(MAX_TITLE_LENGTH) },
                     label = { Text(stringResource(R.string.search_setlists)) },
                     singleLine = true,
                 )
@@ -353,7 +359,7 @@ fun SetlistDetail(
     modifier: Modifier = Modifier,
     embedded: Boolean = false,
 ) {
-    var addDialog by remember { mutableStateOf(false) }
+    var addDialog by rememberSaveable(setlist.id) { mutableStateOf(false) }
     var editing by rememberSaveable(setlist.id) { mutableStateOf(false) }
     val scoreById = remember(scores) { scores.associateBy(Score::id) }
     val displayedScores = remember(setlist.id) {
@@ -364,33 +370,29 @@ fun SetlistDetail(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val maxAutoScroll = with(LocalDensity.current) { 28.dp.toPx() }
-    val rowHeight = with(LocalDensity.current) { SetlistRowHeight.toPx() }
+    var rowHeight by remember { mutableFloatStateOf(0f) }
     var draggedIndex by remember { mutableIntStateOf(-1) }
     var dragOrigin by remember { mutableIntStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var dragPointerY by remember { mutableFloatStateOf(0f) }
     var dragSource by remember { mutableStateOf<List<SetlistScoreEntry>>(emptyList()) }
     var draggedKey by remember { mutableStateOf<String?>(null) }
-    var awaitingPersistence by remember { mutableStateOf(false) }
     var autoScrollJob by remember { mutableStateOf<Job?>(null) }
     var autoScrollDelta by remember { mutableFloatStateOf(0f) }
-    val interactionEnabled = !busy && !awaitingPersistence
+    val interactionEnabled = !busy
 
     LaunchedEffect(setlist.scoreIds, busy) {
         if (!busy && dragOrigin < 0) {
             displayedScores.clear()
             displayedScores.addAll(setlist.scoreIds.toSetlistEntries())
-            awaitingPersistence = false
         }
     }
 
     fun requestReorder(fromIndex: Int, toIndex: Int) {
         if (!interactionEnabled || fromIndex == toIndex) return
-        val reordered = displayedScores.toList().moved(fromIndex, toIndex)
-        displayedScores.clear()
-        displayedScores.addAll(reordered)
-        awaitingPersistence = true
-        actions.reorderScores(setlist.id, reordered.map(SetlistScoreEntry::scoreId))
+        val scoreIds = displayedScores.toList().moved(fromIndex, toIndex).map(SetlistScoreEntry::scoreId)
+        if (scoreIds == setlist.scoreIds) return
+        actions.reorderScores(setlist.id, scoreIds)
     }
 
     fun updateDragPreview() {
@@ -437,21 +439,14 @@ fun SetlistDetail(
         stopAutoScroll()
         val from = dragOrigin
         val to = draggedIndex
-        if (commit && from in setlist.scoreIds.indices && to in setlist.scoreIds.indices) {
-            if (from != to) {
-                awaitingPersistence = true
-                actions.reorderScores(
-                    setlist.id,
-                    displayedScores.map(SetlistScoreEntry::scoreId),
-                )
-            } else {
-                displayedScores.clear()
-                displayedScores.addAll(setlist.scoreIds.toSetlistEntries())
-            }
-        } else {
-            displayedScores.clear()
-            displayedScores.addAll(setlist.scoreIds.toSetlistEntries())
+        val scoreIds = displayedScores.map(SetlistScoreEntry::scoreId)
+        if (commit && from != to && from in setlist.scoreIds.indices &&
+            to in setlist.scoreIds.indices && scoreIds != setlist.scoreIds
+        ) {
+            actions.reorderScores(setlist.id, scoreIds)
         }
+        displayedScores.clear()
+        displayedScores.addAll(setlist.scoreIds.toSetlistEntries())
         draggedIndex = -1
         dragOrigin = -1
         dragOffset = 0f
@@ -531,16 +526,16 @@ fun SetlistDetail(
                                     0f
                                 },
                                 actions = actions,
-                                onDragStart = {
+                                onDragStart = start@{
+                                    val item = listState.layoutInfo.visibleItemsInfo
+                                        .firstOrNull { it.key == entry.key } ?: return@start
+                                    rowHeight = item.size.toFloat()
                                     dragSource = displayedScores.toList()
                                     draggedKey = entry.key
                                     draggedIndex = index
                                     dragOrigin = index
                                     dragOffset = 0f
-                                    dragPointerY = listState.layoutInfo.visibleItemsInfo
-                                        .firstOrNull { it.key == entry.key }
-                                        ?.let { it.offset + it.size / 2f }
-                                        ?: 0f
+                                    dragPointerY = item.offset + item.size / 2f
                                 },
                                 onDrag = ::dragBy,
                                 onDragEnd = { finishDrag(commit = true) },
@@ -633,6 +628,10 @@ private fun SetlistScoreRow(
     val down = stringResource(R.string.move_down)
     val remove = stringResource(R.string.remove)
     val reorder = stringResource(R.string.reorder)
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    val currentOnDragCancel by rememberUpdatedState(onDragCancel)
     val dragScale by animateFloatAsState(setlistDragScale(dragging), label = "setlist-drag-scale")
     Row(
         Modifier.fillMaxWidth().height(SetlistRowHeight)
@@ -679,12 +678,12 @@ private fun SetlistScoreRow(
                 }.pointerInput(dragKey, enabled) {
                     if (enabled) {
                         detectDragGestures(
-                            onDragStart = { onDragStart() },
-                            onDragEnd = onDragEnd,
-                            onDragCancel = onDragCancel,
+                            onDragStart = { currentOnDragStart() },
+                            onDragEnd = { currentOnDragEnd() },
+                            onDragCancel = { currentOnDragCancel() },
                         ) { change, amount ->
                             change.consume()
-                            onDrag(amount.y)
+                            currentOnDrag(amount.y)
                         }
                     }
                 },
@@ -715,7 +714,14 @@ private fun AddScoresDialog(
     onDismiss: () -> Unit,
     onAdd: (List<String>) -> Unit,
 ) {
-    val selected = remember { mutableStateListOf<String>() }
+    val selected = rememberSaveable(
+        saver = listSaver<SnapshotStateList<String>, String>(
+            save = { it.toList() },
+            restore = { it.toMutableStateList() },
+        ),
+    ) { mutableStateListOf<String>() }
+    val scoreIds = remember(scores) { scores.mapTo(mutableSetOf(), Score::id) }
+    val currentSelection = selected.filter(scoreIds::contains)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.add_pdfs)) },
@@ -726,18 +732,21 @@ private fun AddScoresDialog(
                 LazyColumn(Modifier.heightIn(max = 400.dp)) {
                     itemsIndexed(scores, key = { _, score -> score.id }) { _, score ->
                         Row(
-                            Modifier.fillMaxWidth().clickable {
-                                if (score.id in selected) selected.remove(score.id)
-                                else selected.add(score.id)
-                            }.padding(vertical = 8.dp),
+                            Modifier.fillMaxWidth().toggleable(
+                                value = score.id in selected,
+                                role = Role.Checkbox,
+                                onValueChange = { checked ->
+                                    if (checked) {
+                                        if (score.id !in selected) selected.add(score.id)
+                                    } else selected.remove(score.id)
+                                },
+                            ).padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Checkbox(
                                 checked = score.id in selected,
-                                onCheckedChange = { checked ->
-                                    if (checked) selected.add(score.id) else selected.remove(score.id)
-                                },
+                                onCheckedChange = null,
                             )
                             Text(score.title)
                         }
@@ -746,7 +755,7 @@ private fun AddScoresDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = selected.isNotEmpty(), onClick = { onAdd(selected.toList()) }) {
+            TextButton(enabled = currentSelection.isNotEmpty(), onClick = { onAdd(currentSelection) }) {
                 Text(stringResource(R.string.add))
             }
         },

@@ -20,8 +20,8 @@ android {
         applicationId = "com.majkeylab.sheetset"
         minSdk = 29
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.5.0-alpha.9"
+        versionCode = 20
+        versionName = "0.5.0-alpha.15"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -69,6 +69,8 @@ android {
     buildFeatures {
         compose = true
     }
+
+    sourceSets.getByName("main").assets.srcDir(rootProject.file("third_party"))
 }
 
 kotlin {

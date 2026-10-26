@@ -1,5 +1,6 @@
 package cz.teply.sheetset
 
+import android.net.Uri
 import cz.teply.sheetset.data.LibraryCatalog
 import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.pdf.DocumentAnnotations
@@ -19,7 +20,8 @@ data class ReaderUiState(
 data class LibraryUiState(
     val catalog: LibraryCatalog = LibraryCatalog(),
     val loading: Boolean = false,
-    val error: Boolean = false,
+    val error: Int? = null,
     val reader: ReaderUiState? = null,
     val settings: AppSettings = AppSettings(),
+    val incomingPdfs: List<Uri> = emptyList(),
 )

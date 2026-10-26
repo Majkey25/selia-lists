@@ -5,10 +5,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -18,7 +25,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.test.espresso.Espresso
 import cz.teply.sheetset.pdf.AnnotationEditorSettings
 import cz.teply.sheetset.settings.AppSettings
@@ -29,6 +39,7 @@ import cz.teply.sheetset.ui.SheetSetApp
 import cz.teply.sheetset.ui.SheetSetTheme
 import cz.teply.sheetset.ui.AppDestination
 import cz.teply.sheetset.ui.SettingsDrawer
+import cz.teply.sheetset.ui.SettingsSwitchRow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -47,14 +58,14 @@ class SettingsFlowTest {
         composeRule.onNodeWithContentDescription("Menu").performClick()
 
         listOf("Library", "Reading", "Data", "App").forEach {
-            composeRule.onNodeWithText(it).assertIsDisplayed()
+            composeRule.onNodeWithText(it).performScrollTo().assertIsDisplayed()
         }
         listOf(
             "Reader and page layout",
             "Gestures",
             "Annotation tools",
             "Backup and restore",
-        ).forEach { composeRule.onNodeWithText(it).assertIsDisplayed() }
+        ).forEach { composeRule.onNodeWithText(it).performScrollTo().assertIsDisplayed() }
         composeRule.onNodeWithText("Appearance").performScrollTo().assertIsDisplayed()
         composeRule.onAllNodesWithText("Share backup").assertCountEquals(0)
     }
@@ -62,15 +73,58 @@ class SettingsFlowTest {
     @Test
     fun appearanceChoiceUpdatesThemeMode() {
         var settings by mutableStateOf(AppSettings())
-        setSettingsContent(
-            settings = settings,
-            actions = SheetSetActions(updateSettings = { settings = it }),
-        )
+        var updates = 0
+        composeRule.setContent {
+            SheetSetTheme {
+                SheetSetApp(
+                    LibraryUiState(settings = settings),
+                    SheetSetActions(
+                        updateSettings = {
+                            settings = it
+                            updates++
+                        },
+                    ),
+                )
+            }
+        }
 
         openMenuPage("Appearance")
-        composeRule.onNodeWithText("Dark").performClick()
+        val radioRole = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton)
+        composeRule.onAllNodes(radioRole and hasClickAction(), useUnmergedTree = true)
+            .assertCountEquals(2)
+        composeRule.onNodeWithText("Light").assertIsSelected()
+        composeRule.onNodeWithText("Dark").assert(radioRole).assertIsNotSelected()
+            .performClick().assertIsSelected()
 
-        composeRule.runOnIdle { assertEquals(ThemeMode.DARK, settings.themeMode) }
+        composeRule.runOnIdle {
+            assertEquals(ThemeMode.DARK, settings.themeMode)
+            assertEquals(1, updates)
+        }
+    }
+
+    @Test
+    fun switchRowHasOneLabeledToggleAction() {
+        var checked by mutableStateOf(true)
+        var updates = 0
+        composeRule.setContent {
+            SheetSetTheme {
+                SettingsSwitchRow(
+                    R.string.keep_screen_awake,
+                    R.string.keep_screen_awake_summary,
+                    checked,
+                ) {
+                    checked = it
+                    updates++
+                }
+            }
+        }
+
+        composeRule.onAllNodes(hasClickAction(), useUnmergedTree = true).assertCountEquals(1)
+        composeRule.onAllNodesWithText("Keep screen awake").assertCountEquals(1)
+        composeRule.onNodeWithText("Keep screen awake")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Switch))
+            .assertIsOn().performClick().assertIsOff()
+        composeRule.runOnIdle { assertEquals(1, updates) }
     }
 
     @Test
@@ -84,6 +138,29 @@ class SettingsFlowTest {
         composeRule.onAllNodesWithText("Half page").assertCountEquals(2)
         composeRule.onNodeWithText("Two pages").assertIsDisplayed()
         composeRule.onAllNodesWithText("Width").assertCountEquals(0)
+    }
+
+    @Test
+    fun readerPageAndLayoutDialogSurviveStateRestoration() {
+        val restorationTester = StateRestorationTester(composeRule)
+        restorationTester.setContent {
+            SheetSetTheme {
+                SheetSetApp(LibraryUiState(), SheetSetActions())
+            }
+        }
+        openMenuPage("Reader and page layout")
+
+        restorationTester.emulateSavedInstanceStateRestore()
+
+        composeRule.onNodeWithText("Single page").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Half page").assertIsDisplayed()
+
+        restorationTester.emulateSavedInstanceStateRestore()
+
+        composeRule.onNodeWithText("Half page").assertIsDisplayed()
+        composeRule.onNodeWithText("Two pages").assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithText("Single page").assertIsDisplayed()
     }
 
     @Test

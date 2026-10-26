@@ -2,7 +2,12 @@ package cz.teply.sheetset.pdf
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
@@ -12,14 +17,136 @@ import cz.teply.sheetset.R
 import cz.teply.sheetset.settings.AnnotationTextSize
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 class PdfExporterTest {
     @Test
-    fun exportRendersEveryAnnotationTypeAndPreservesOriginal() {
+    fun transparentArrowKeepsOpacityAtTip() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val typeface = requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular))
+        val bitmap = Bitmap.createBitmap(1_000, 1_000, Bitmap.Config.ARGB_8888)
+        try {
+            bitmap.eraseColor(Color.TRANSPARENT)
+            AnnotationRenderer.draw(
+                Canvas(bitmap),
+                ShapeAnnotation(
+                    id = "arrow",
+                    kind = ShapeKind.ARROW,
+                    start = NormalizedPoint(0.1f, 0.5f),
+                    end = NormalizedPoint(0.9f, 0.5f),
+                    width = 0.02f,
+                    opacity = 128,
+                ),
+                RectF(0f, 0f, 1_000f, 1_000f),
+                typeface,
+            )
+            assertEquals("Arrow body opacity", 128, Color.alpha(bitmap.getPixel(500, 500)))
+            assertEquals("Arrow tip opacity", 128, Color.alpha(bitmap.getPixel(900, 500)))
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    @Test
+    fun exportKeepsPreviewTextWrappingAndStrokeWidthsAcrossPageScales() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val typeface = requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular))
+        val annotations = listOf(
+            InkAnnotation(
+                id = "ink",
+                kind = InkKind.PEN,
+                width = 0.002f,
+                points = listOf(NormalizedPoint(0.1f, 0.1f), NormalizedPoint(0.9f, 0.1f)),
+            ),
+            ShapeAnnotation(
+                id = "line",
+                kind = ShapeKind.LINE,
+                start = NormalizedPoint(0.1f, 0.2f),
+                end = NormalizedPoint(0.9f, 0.2f),
+                width = 0.0015f,
+            ),
+            MarkupAnnotation(
+                id = "underline",
+                kind = MarkupKind.UNDERLINE,
+                bounds = listOf(NormalizedRect(0.1f, 0.26f, 0.9f, 0.31f)),
+            ),
+            MarkupAnnotation(
+                id = "strike",
+                kind = MarkupKind.STRIKE_THROUGH,
+                bounds = listOf(NormalizedRect(0.1f, 0.35f, 0.9f, 0.41f)),
+            ),
+            TextBoxAnnotation(
+                id = "text",
+                bounds = NormalizedRect(0.1f, 0.5f, 0.7f, 0.95f),
+                text = "Allegro moderato\nRepeat softly until the final measure.",
+                size = AnnotationTextSize.SMALL,
+            ),
+        )
+        val regions = mapOf(
+            "ink" to NormalizedRect(0.05f, 0.06f, 0.95f, 0.14f),
+            "shape" to NormalizedRect(0.05f, 0.16f, 0.95f, 0.24f),
+            "underline" to NormalizedRect(0.05f, 0.25f, 0.95f, 0.35f),
+            "strike" to NormalizedRect(0.05f, 0.35f, 0.95f, 0.45f),
+            "text border" to NormalizedRect(0.15f, 0.49f, 0.65f, 0.504f),
+            "wrapped text" to NormalizedRect(0.103f, 0.503f, 0.697f, 0.947f),
+        )
+        val preview = Bitmap.createBitmap(1_000, 1_250, Bitmap.Config.ARGB_8888)
+        try {
+            preview.eraseColor(Color.WHITE)
+            val canvas = Canvas(preview)
+            val pageBounds = RectF(0f, 0f, preview.width.toFloat(), preview.height.toFloat())
+            annotations.forEach { AnnotationRenderer.draw(canvas, it, pageBounds, typeface) }
+            for ((width, height) in listOf(200 to 250, 600 to 750)) {
+                val source = createBlankPdf(context, pages = 1, width = width, height = height)
+                val destination = File(context.cacheDir, "scale-export-${UUID.randomUUID()}.pdf")
+                try {
+                    PdfExporter.export(source, destination::outputStream, DocumentAnnotations(mapOf(0 to annotations)), typeface)
+                    val exported = renderPdf(destination, preview.width, preview.height)
+                    try {
+                        for ((name, region) in regions) {
+                            val (previewInk, previewBounds) = measureInk(preview, region)
+                            val (exportedInk, exportedBounds) = measureInk(exported, region)
+                            var message = "$width x $height $name preview=$previewBounds exported=$exportedBounds"
+                            assertInkBounds(message, previewBounds, exportedBounds)
+                            if (name == "wrapped text") {
+                                val previewLines = inkLines(preview, region)
+                                val exportedLines = inkLines(exported, region)
+                                message += " previewLines=$previewLines exportedLines=$exportedLines"
+                                assertEquals(message, previewLines.size, exportedLines.size)
+                                previewLines.zip(exportedLines).forEach { (expected, actual) ->
+                                    assertInkBounds(message, expected, actual)
+                                }
+                                assertTextInkCoverage(message, preview, exported, region)
+                            } else {
+                                assertEquals(message, previewInk.toDouble(), exportedInk.toDouble(), previewInk * 0.08)
+                            }
+                        }
+                    } finally {
+                        exported.recycle()
+                    }
+                } finally {
+                    source.delete()
+                    destination.delete()
+                }
+            }
+        } finally {
+            preview.recycle()
+        }
+    }
+
+    @Test
+    fun exportRendersEveryAnnotationTypeAndPreservesOriginal() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val source = createBlankPdf(context, pages = 2)
         val destination = File(context.cacheDir, "export-${UUID.randomUUID()}.pdf")
@@ -104,14 +231,12 @@ class PdfExporterTest {
             ),
         )
 
-        destination.outputStream().use { output ->
-            PdfExporter.export(
-                source,
-                output,
-                annotations,
-                requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular)),
-            )
-        }
+        PdfExporter.export(
+            source,
+            destination::outputStream,
+            annotations,
+            requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular)),
+        )
 
         assertEquals(beforeHash, source.sha256())
         assertEquals(2, pageCount(destination))
@@ -143,14 +268,108 @@ class PdfExporterTest {
         assertTrue(darkPixelsIn(destination, 180, 320, 270, 400) > 20)
         source.delete()
         destination.delete()
+        Unit
     }
 
-    private fun createBlankPdf(context: Context, pages: Int): File {
+    @Test
+    fun ordinaryEightPageA4ScoreExportsCompletely() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val source = createBlankPdf(context, pages = 8, width = 595, height = 842, staves = true)
+        val destination = File(context.cacheDir, "export-${UUID.randomUUID()}.pdf")
+        try {
+            val beforeHash = source.sha256()
+            val runtime = Runtime.getRuntime()
+            println("Export heap: max=${runtime.maxMemory()}, used=${runtime.totalMemory() - runtime.freeMemory()}")
+            PdfExporter.export(source, destination::outputStream, DocumentAnnotations(), Typeface.DEFAULT)
+            assertEquals(8, pageCount(destination))
+            assertEquals(beforeHash, source.sha256())
+            assertTrue(darkPixels(destination) > 1_000)
+        } finally {
+            source.delete()
+            destination.delete()
+        }
+    }
+
+    @Test
+    fun pageCountAndRasterBudgetRejectBeforeOpeningDestination() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val sources = listOf(
+            createBlankPdf(context, MAX_EXPORT_PAGES + 1, width = 1, height = 1),
+            createBlankPdf(context, pages = 8, width = 3_000, height = 3_000),
+        )
+        try {
+            sources.forEach { source ->
+                var opened = false
+                val beforeHash = source.sha256()
+                assertThrows(PdfExportLimitException::class.java) {
+                    runBlocking {
+                        PdfExporter.export(
+                            source,
+                            { opened = true; ByteArrayOutputStream() },
+                            DocumentAnnotations(),
+                            Typeface.DEFAULT,
+                        )
+                    }
+                }
+                assertFalse(opened)
+                assertEquals(beforeHash, source.sha256())
+            }
+        } finally {
+            sources.forEach(File::delete)
+        }
+    }
+
+    @Test
+    fun cancellationBeforeWritingLeavesOutputEmptyAndSourceIntact() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val source = createBlankPdf(context, pages = 1)
+        val output = ByteArrayOutputStream()
+        val job = Job()
+        try {
+            val beforeHash = source.sha256()
+            var cancelled = false
+            try {
+                withContext(job) {
+                    PdfExporter.export(
+                        source,
+                        { job.cancel(); output },
+                        DocumentAnnotations(),
+                        Typeface.DEFAULT,
+                    )
+                }
+            } catch (_: CancellationException) {
+                cancelled = true
+            }
+            assertTrue(cancelled)
+            assertEquals(0, output.size())
+            assertEquals(beforeHash, source.sha256())
+        } finally {
+            job.cancel()
+            source.delete()
+        }
+    }
+
+    private fun createBlankPdf(
+        context: Context,
+        pages: Int,
+        width: Int = 300,
+        height: Int = 400,
+        staves: Boolean = false,
+    ): File {
         val file = File(context.cacheDir, "source-${UUID.randomUUID()}.pdf")
         val document = PdfDocument()
         try {
             repeat(pages) { index ->
-                val page = document.startPage(PdfDocument.PageInfo.Builder(300, 400, index + 1).create())
+                val page = document.startPage(PdfDocument.PageInfo.Builder(width, height, index + 1).create())
+                if (staves) {
+                    val paint = Paint().apply { color = Color.BLACK; strokeWidth = 1f }
+                    repeat(8) { staff ->
+                        repeat(5) { line ->
+                            val y = 60f + staff * 90f + line * 8f
+                            page.canvas.drawLine(40f, y, width - 40f, y, paint)
+                        }
+                    }
+                }
                 document.finishPage(page)
             }
             file.outputStream().use(document::writeTo)
@@ -158,6 +377,96 @@ class PdfExporterTest {
             document.close()
         }
         return file
+    }
+
+    private fun renderPdf(file: File, width: Int, height: Int): Bitmap = ParcelFileDescriptor
+        .open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        .use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                renderer.openPage(0).use { page ->
+                    Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
+                        bitmap.eraseColor(Color.WHITE)
+                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    }
+                }
+            }
+        }
+
+    private fun measureInk(bitmap: Bitmap, region: NormalizedRect): Pair<Long, Rect> {
+        var coverage = 0L
+        val bounds = Rect(bitmap.width, bitmap.height, 0, 0)
+        for (y in (region.top * bitmap.height).toInt() until (region.bottom * bitmap.height).toInt()) {
+            for (x in (region.left * bitmap.width).toInt() until (region.right * bitmap.width).toInt()) {
+                val red = Color.red(bitmap.getPixel(x, y))
+                coverage += 255 - red
+                if (red < 128) {
+                    bounds.left = minOf(bounds.left, x)
+                    bounds.top = minOf(bounds.top, y)
+                    bounds.right = maxOf(bounds.right, x + 1)
+                    bounds.bottom = maxOf(bounds.bottom, y + 1)
+                }
+            }
+        }
+        assertTrue("Expected visible annotation ink", !bounds.isEmpty)
+        return coverage to bounds
+    }
+
+    private fun assertInkBounds(message: String, expected: Rect, actual: Rect) {
+        assertEquals(message, expected.left.toDouble(), actual.left.toDouble(), 2.0)
+        assertEquals(message, expected.top.toDouble(), actual.top.toDouble(), 2.0)
+        assertEquals(message, expected.right.toDouble(), actual.right.toDouble(), 2.0)
+        assertEquals(message, expected.bottom.toDouble(), actual.bottom.toDouble(), 2.0)
+    }
+
+    private fun inkLines(bitmap: Bitmap, region: NormalizedRect): List<Rect> {
+        val lines = mutableListOf<Rect>()
+        var current: Rect? = null
+        for (y in (region.top * bitmap.height).toInt() until (region.bottom * bitmap.height).toInt()) {
+            val row = Rect(bitmap.width, y, 0, y + 1)
+            for (x in (region.left * bitmap.width).toInt() until (region.right * bitmap.width).toInt()) {
+                if (Color.red(bitmap.getPixel(x, y)) < 128) {
+                    row.left = minOf(row.left, x)
+                    row.right = maxOf(row.right, x + 1)
+                }
+            }
+            if (row.isEmpty) {
+                current = null
+            } else {
+                val line = current
+                if (line == null) {
+                    lines.add(row)
+                    current = row
+                } else {
+                    line.union(row)
+                }
+            }
+        }
+        return lines
+    }
+
+    private fun assertTextInkCoverage(message: String, preview: Bitmap, exported: Bitmap, region: NormalizedRect) {
+        val left = (region.left * preview.width).toInt()
+        val top = (region.top * preview.height).toInt()
+        val right = (region.right * preview.width).toInt()
+        val bottom = (region.bottom * preview.height).toInt()
+        fun hasNearbyInk(bitmap: Bitmap, x: Int, y: Int): Boolean {
+            for (sampleY in maxOf(top, y - 2) until minOf(bottom, y + 3)) {
+                for (sampleX in maxOf(left, x - 2) until minOf(right, x + 3)) {
+                    if (Color.red(bitmap.getPixel(sampleX, sampleY)) < 128) return true
+                }
+            }
+            return false
+        }
+        // PDFium and Canvas hint fonts differently; compare glyph coverage within the same 2px bounds allowance.
+        for ((expected, actual) in listOf(preview to exported, exported to preview)) {
+            for (y in top until bottom) {
+                for (x in left until right) {
+                    if (Color.red(expected.getPixel(x, y)) < 128 && !hasNearbyInk(actual, x, y)) {
+                        fail("$message unmatched glyph ink at ($x, $y)")
+                    }
+                }
+            }
+        }
     }
 
     private fun pageCount(file: File): Int = ParcelFileDescriptor

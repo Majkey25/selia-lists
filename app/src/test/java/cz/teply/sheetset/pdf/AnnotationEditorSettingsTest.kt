@@ -113,6 +113,47 @@ class AnnotationEditorSettingsTest {
     }
 
     @Test
+    fun legacyMigrationKeepsSoleCustomizedDrawingAndObjectTools() {
+        for (version in 1..2) {
+            for (visiblePreset in listOf("pen-2", "marker")) {
+                val expected = AnnotationEditorSettings.defaults().copy(
+                    presets = AnnotationEditorSettings.defaults().presets.map {
+                        it.copy(visible = it.id == visiblePreset)
+                    },
+                    visibleObjectTools = setOf("lasso"),
+                    quickColors = listOf(AnnotationColor.RED, AnnotationColor.BLUE),
+                    palmRejection = true,
+                )
+                val raw = JSONObject(AnnotationEditorSettingsJson.encode(expected))
+                    .put("version", version).toString()
+
+                val migrated = AnnotationEditorSettingsJson.decode(raw)
+
+                assertEquals(listOf(visiblePreset), migrated.presets.filter(DrawingPreset::visible).map { it.id })
+                assertEquals(expected.visibleObjectTools, migrated.visibleObjectTools)
+                assertEquals(expected.quickColors, migrated.quickColors)
+                assertTrue(migrated.palmRejection)
+            }
+        }
+    }
+
+    @Test
+    fun versionTwoMigrationPreservesCustomizedVisibility() {
+        val defaults = AnnotationEditorSettings.defaults()
+        val expected = defaults.copy(
+            presets = defaults.presets.map { it.copy(visible = true) },
+            visibleObjectTools = setOf("lasso", "text-box"),
+        )
+        val raw = JSONObject(AnnotationEditorSettingsJson.encode(expected))
+            .put("version", 2).toString()
+
+        val migrated = AnnotationEditorSettingsJson.decode(raw)
+
+        assertEquals(expected.presets.map { it.id to it.visible }, migrated.presets.map { it.id to it.visible })
+        assertEquals(expected.visibleObjectTools, migrated.visibleObjectTools)
+    }
+
+    @Test
     fun sixWidthLevelsShareThinAndWideBounds() {
         assertEquals(0.002f, 1.normalizedAnnotationWidth(), 0f)
         assertEquals(0.2f, 6.normalizedAnnotationWidth(), 0f)

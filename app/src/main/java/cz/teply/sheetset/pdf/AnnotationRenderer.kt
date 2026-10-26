@@ -19,6 +19,8 @@ import kotlin.math.min
 import kotlin.math.sin
 
 object AnnotationRenderer {
+    private const val TEXT_LAYOUT_PAGE_HEIGHT = 1_000f
+
     private val symbolGlyphs = mapOf(
         "sharp" to "♯",
         "flat" to "♭",
@@ -104,14 +106,14 @@ object AnnotationRenderer {
                     bounds.bottom,
                     bounds.right,
                     bounds.bottom,
-                    strokePaint(color, max(2f, page.height() * 0.003f), annotation.opacity),
+                    strokePaint(color, page.height() * 0.003f, annotation.opacity),
                 )
                 MarkupKind.STRIKE_THROUGH -> canvas.drawLine(
                     bounds.left,
                     bounds.centerY(),
                     bounds.right,
                     bounds.centerY(),
-                    strokePaint(color, max(2f, page.height() * 0.003f), annotation.opacity),
+                    strokePaint(color, page.height() * 0.003f, annotation.opacity),
                 )
             }
         }
@@ -119,7 +121,7 @@ object AnnotationRenderer {
 
     private fun drawTextBox(canvas: Canvas, annotation: TextBoxAnnotation, page: RectF) {
         val bounds = annotation.bounds.toRectF(page)
-        val padding = max(4f, min(page.width(), page.height()) * 0.008f)
+        val padding = min(page.width(), page.height()) * 0.008f
         canvas.drawRect(
             bounds,
             Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -130,23 +132,25 @@ object AnnotationRenderer {
         )
         canvas.drawRect(
             bounds,
-            strokePaint(annotation.color.argb, max(1.5f, page.height() * 0.002f), annotation.opacity),
+            strokePaint(annotation.color.argb, page.height() * 0.002f, annotation.opacity),
         )
+        // StaticLayout uses integer metrics; keep wrapping independent of preview and PDF scale.
+        val textScale = page.height() / TEXT_LAYOUT_PAGE_HEIGHT
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = annotation.color.argb
             alpha = annotation.opacity
             textSize = when (annotation.size) {
-                AnnotationTextSize.SMALL -> page.height() * 0.028f
-                AnnotationTextSize.MEDIUM -> page.height() * 0.036f
-                AnnotationTextSize.LARGE -> page.height() * 0.048f
-            }.coerceAtLeast(10f)
+                AnnotationTextSize.SMALL -> TEXT_LAYOUT_PAGE_HEIGHT * 0.028f
+                AnnotationTextSize.MEDIUM -> TEXT_LAYOUT_PAGE_HEIGHT * 0.036f
+                AnnotationTextSize.LARGE -> TEXT_LAYOUT_PAGE_HEIGHT * 0.048f
+            }
         }
         val layout = StaticLayout.Builder.obtain(
             annotation.text,
             0,
             annotation.text.length,
             textPaint,
-            (bounds.width() - padding * 2f).toInt().coerceAtLeast(1),
+            ((bounds.width() - padding * 2f) / textScale).toInt().coerceAtLeast(1),
         )
             .setAlignment(
                 when (annotation.alignment) {
@@ -161,6 +165,7 @@ object AnnotationRenderer {
         canvas.save()
         canvas.clipRect(bounds)
         canvas.translate(bounds.left + padding, bounds.top + padding)
+        canvas.scale(textScale, textScale)
         layout.draw(canvas)
         canvas.restore()
     }
@@ -178,25 +183,19 @@ object AnnotationRenderer {
         when (annotation.kind) {
             ShapeKind.LINE -> canvas.drawLine(startX, startY, endX, endY, paint)
             ShapeKind.ARROW -> {
-                canvas.drawLine(startX, startY, endX, endY, paint)
                 val angle = atan2(endY - startY, endX - startX)
                 val length = hypot(endX - startX, endY - startY)
                 val head = min(length * 0.25f, min(page.width(), page.height()) * 0.04f)
                 val spread = 0.55f
-                canvas.drawLine(
-                    endX,
-                    endY,
-                    endX - cos(angle - spread) * head,
-                    endY - sin(angle - spread) * head,
-                    paint,
-                )
-                canvas.drawLine(
-                    endX,
-                    endY,
-                    endX - cos(angle + spread) * head,
-                    endY - sin(angle + spread) * head,
-                    paint,
-                )
+                val path = Path().apply {
+                    moveTo(startX, startY)
+                    lineTo(endX, endY)
+                    moveTo(endX, endY)
+                    lineTo(endX - cos(angle - spread) * head, endY - sin(angle - spread) * head)
+                    moveTo(endX, endY)
+                    lineTo(endX - cos(angle + spread) * head, endY - sin(angle + spread) * head)
+                }
+                canvas.drawPath(path, paint)
             }
             ShapeKind.RECTANGLE -> canvas.drawRect(shapeBounds(annotation, page), paint)
             ShapeKind.ELLIPSE -> canvas.drawOval(shapeBounds(annotation, page), paint)
@@ -311,7 +310,7 @@ object AnnotationRenderer {
             strokeJoin = Paint.Join.ROUND
             this.color = color
             this.alpha = alpha
-            strokeWidth = width.coerceAtLeast(1f)
+            strokeWidth = width
         }
 
     private fun NormalizedPoint.x(page: RectF): Float = x.normalizedX(page)

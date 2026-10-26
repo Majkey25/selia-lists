@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="confirm_incoming_pdfs">Geteilte PDF-Dateien zur Bibliothek hinzufügen? Dateien: %1$d</string>
     <string name="app_name">SeliaLists</string>
     <string name="tab_pdf">PDF</string>
     <string name="tab_setlists">Setlists</string>
@@ -43,6 +44,8 @@
     <string name="choose_pdfs">Wähle PDFs aus deiner Bibliothek.</string>
     <string name="import_first">Importiere zuerst PDFs im PDF-Tab.</string>
     <string name="action_failed">Die Aktion konnte nicht abgeschlossen werden.</string>
+    <string name="annotation_limit_reached">Diese Änderung überschreitet die Grenze für die Komplexität der Anmerkungen. Vorhandene Anmerkungen bleiben erhalten.</string>
+    <string name="pdf_export_limit_reached">Diese PDF überschreitet die sichere Exportgröße für den verfügbaren Speicher. Exportieren Sie ein kleineres Dokument. Das Original bleibt erhalten.</string>
     <string name="close">Schließen</string>
     <string name="export">Exportieren</string>
     <string name="annotate">Anmerken</string>

@@ -3,10 +3,34 @@ package cz.teply.sheetset.pdf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 import cz.teply.sheetset.settings.AnnotationTextSize
 
 class AnnotationHistoryTest {
+    @Test
+    fun aggregateTextBudgetRejectsAddUpdateAndDuplicateWithoutChangingHistory() {
+        val labels = List(14) { index ->
+            TextBoxAnnotation(
+                "text-$index", NormalizedRect(0.1f, 0.1f, 0.5f, 0.3f),
+                "a".repeat(MAX_TEXT_LENGTH), AnnotationTextSize.MEDIUM,
+            )
+        }
+        val short = labels.first().copy(id = "short", text = "a")
+        val ink = first.copy(points = List(MAX_POINTS_PER_INK) { NormalizedPoint(0.1f, 0.2f) })
+        val history = AnnotationHistory(labels + short + ink)
+        assertThrows(AnnotationLimitException::class.java) {
+            history.add(short.copy(id = "new"))
+        }
+        assertThrows(AnnotationLimitException::class.java) {
+            history.update(short.copy(text = "a".repeat(MAX_TEXT_LENGTH)))
+        }
+        assertThrows(AnnotationLimitException::class.java) {
+            history.commit(history.annotations + labels.first().copy(id = "duplicate"))
+        }
+        assertEquals(labels + short + ink, history.annotations)
+    }
+
     private val first = InkAnnotation(
         id = "first",
         kind = InkKind.PEN,

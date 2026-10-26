@@ -16,6 +16,7 @@ import cz.teply.sheetset.MainActivity
 import cz.teply.sheetset.settings.PageFit
 import java.io.File
 import java.util.UUID
+import kotlin.math.abs
 import kotlin.math.min
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -139,6 +140,176 @@ class PdfPageViewInputTest {
     }
 
     @Test
+    fun liftingOutsidePageCommitsLastValidStrokePoint() {
+        val added = mutableListOf<PageAnnotation>()
+        scenario.onActivity {
+            view.tool = ReaderTool.PEN
+            view.onAddAnnotation = added::add
+        }
+        val downTime = SystemClock.uptimeMillis()
+        send(event(downTime, downTime, MotionEvent.ACTION_DOWN, Pointer(0, FINGER, pagePoint(0.2f, 0.2f))))
+        send(event(downTime, downTime + 10, MotionEvent.ACTION_MOVE, Pointer(0, FINGER, pagePoint(0.8f, 0.8f))))
+        send(event(downTime, downTime + 20, MotionEvent.ACTION_UP, Pointer(0, FINGER, pagePoint(1.1f, 1.1f))))
+
+        assertEquals(NormalizedPoint(0.8f, 0.8f), (added.single() as InkAnnotation).points.last())
+    }
+
+    @Test
+    fun changingPageOrSourceClearsBitmapAndCancelsStroke() {
+        val replacement = createPdf(ApplicationProvider.getApplicationContext())
+        val added = mutableListOf<PageAnnotation>()
+        try {
+            for ((file, index) in listOf(source to 1, replacement to 1)) {
+                val start = pagePoint(0.2f, 0.2f)
+                val end = pagePoint(0.8f, 0.8f)
+                val downTime = SystemClock.uptimeMillis()
+                scenario.onActivity {
+                    view.tool = ReaderTool.PEN
+                    view.onAddAnnotation = added::add
+                }
+                send(event(downTime, downTime, MotionEvent.ACTION_DOWN, Pointer(0, FINGER, start)))
+                send(event(downTime, downTime + 10, MotionEvent.ACTION_MOVE, Pointer(0, FINGER, end)))
+                scenario.onActivity {
+                    view.showPage(file, index)
+                    val output = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+                    try {
+                        view.draw(Canvas(output))
+                        assertEquals(Color.rgb(18, 18, 18), output.getPixel(view.width / 2, view.height / 2))
+                    } finally {
+                        output.recycle()
+                    }
+                    val up = event(downTime, downTime + 20, MotionEvent.ACTION_UP, Pointer(0, FINGER, end))
+                    view.dispatchTouchEvent(up)
+                    up.recycle()
+                    assertTrue(added.isEmpty())
+                }
+                awaitRenderedPage()
+                send(event(downTime, downTime + 30, MotionEvent.ACTION_UP, Pointer(0, FINGER, end)))
+                assertTrue(added.isEmpty())
+            }
+        } finally {
+            replacement.delete()
+        }
+    }
+
+    @Test
+    fun pageChangeCancelsViewGestureUntilNextDown() {
+        val tallSource = createPdf(ApplicationProvider.getApplicationContext(), pageHeight = 1_200)
+        var nextCount = 0
+        try {
+            scenario.onActivity {
+                view.layout(0, 0, 300, 300)
+                view.pageFit = PageFit.WIDTH
+                view.onNextPage = { nextCount++ }
+                view.showPage(tallSource, 0)
+            }
+            awaitRenderedPage()
+            val point = Point(250f, 150f)
+            val downTime = SystemClock.uptimeMillis()
+            send(event(downTime, downTime, MotionEvent.ACTION_DOWN, Pointer(0, FINGER, point)))
+            scenario.onActivity { view.showPage(tallSource, 1) }
+            awaitRenderedPage()
+            val before = viewport()
+            assertTrue(before.panY > 0f)
+
+            send(event(downTime, downTime + 10, MotionEvent.ACTION_MOVE, Pointer(0, FINGER, point.copy(y = 50f))))
+            assertEquals(before, viewport())
+            send(event(downTime, downTime + 20, MotionEvent.ACTION_UP, Pointer(0, FINGER, point)))
+            assertEquals(0, nextCount)
+
+            tap(point)
+            assertEquals(1, nextCount)
+        } finally {
+            tallSource.delete()
+        }
+    }
+
+    @Test
+    fun viewStylusPointerUpDoesNotTurnPageFromRemainingFinger() {
+        var nextCount = 0
+        scenario.onActivity {
+            view.layout(0, 0, 300, 300)
+            view.tool = ReaderTool.VIEW
+            view.pageFit = PageFit.PAGE
+            view.editorSettings = AnnotationEditorSettings.defaults().copy(palmRejection = true)
+            view.onNextPage = { nextCount++ }
+        }
+        val stylus = Point(250f, 150f)
+        val finger = Point(50f, 150f)
+        val downTime = SystemClock.uptimeMillis()
+
+        send(event(downTime, downTime, MotionEvent.ACTION_DOWN, Pointer(10, STYLUS, stylus)))
+        send(
+            event(
+                downTime, downTime + 10,
+                MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(10, STYLUS, stylus), Pointer(11, FINGER, finger),
+            ),
+        )
+        send(
+            event(
+                downTime, downTime + 20, MotionEvent.ACTION_POINTER_UP,
+                Pointer(10, STYLUS, stylus), Pointer(11, FINGER, finger),
+            ),
+        )
+        send(event(downTime, downTime + 30, MotionEvent.ACTION_UP, Pointer(11, FINGER, finger)))
+
+        assertEquals("The remaining finger must not finish the stylus gesture", 0, nextCount)
+        tap(stylus)
+        assertEquals("A fresh finger gesture must still turn the page", 1, nextCount)
+    }
+
+    @Test
+    fun enteringHalfPageModeRealignsUnchangedTopPart() {
+        val tallSource = createPdf(ApplicationProvider.getApplicationContext(), pageHeight = 1_200)
+        try {
+            scenario.onActivity {
+                view.layout(0, 0, 300, 300)
+                view.pageFit = PageFit.WIDTH
+                view.showPage(tallSource, 0)
+            }
+            awaitRenderedPage()
+            drag(Point(150f, 150f), Point(150f, 50f))
+            val panned = viewport()
+            scenario.onActivity { view.setHalfPagePart(0, halfPageMode = true) }
+
+            assertTrue(viewport().panY > panned.panY)
+            assertEquals(1f, viewport().zoom)
+        } finally {
+            tallSource.delete()
+        }
+    }
+
+    @Test
+    fun renderFailureReportsErrorAndClearsPreviousPage() {
+        val failed = java.util.concurrent.CountDownLatch(1)
+        scenario.onActivity {
+            view.onRenderError = { failed.countDown() }
+            view.showPage(File(source.parentFile, "missing-${UUID.randomUUID()}.pdf"), 0)
+        }
+
+        assertTrue(failed.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(Color.rgb(18, 18, 18), pageCenterColor())
+        scenario.onActivity { view.showPage(source, 0) }
+        awaitRenderedPage()
+    }
+
+    @Test
+    fun pageRenderingCompletesBeforeViewIsAttached() {
+        scenario.onActivity { activity ->
+            view = PdfPageView(activity)
+            view.layout(0, 0, 300, 300)
+            view.showPage(source, 0)
+            assertFalse(view.isAttachedToWindow)
+        }
+        try {
+            awaitRenderedPage()
+        } finally {
+            scenario.onActivity { activity -> activity.setContentView(view) }
+        }
+    }
+
+    @Test
     fun twoFingerGesturePansAndZoomsWithoutCommittingPenStroke() {
         val added = mutableListOf<PageAnnotation>()
         scenario.onActivity {
@@ -251,6 +422,84 @@ class PdfPageViewInputTest {
     }
 
     @Test
+    fun twoFingerZoomIgnoresStylusMotionAndEndsWhenFingersLift() {
+        val added = mutableListOf<PageAnnotation>()
+        scenario.onActivity {
+            view.editorSettings = AnnotationEditorSettings.defaults().copy(palmRejection = true)
+            view.tool = ReaderTool.PEN
+            view.onAddAnnotation = added::add
+        }
+        val downTime = SystemClock.uptimeMillis()
+        var eventTime = downTime
+        var stylus = pagePoint(0.2f, 0.2f)
+        var first = pagePoint(0.45f, 0.5f)
+        var second = pagePoint(0.55f, 0.5f)
+        fun move() {
+            eventTime += 20
+            send(
+                event(
+                    downTime, eventTime, MotionEvent.ACTION_MOVE,
+                    Pointer(10, STYLUS, stylus), Pointer(11, FINGER, first), Pointer(12, FINGER, second),
+                ),
+            )
+        }
+        send(event(downTime, eventTime, MotionEvent.ACTION_DOWN, Pointer(10, STYLUS, stylus)))
+        send(
+            event(
+                downTime, ++eventTime,
+                MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(10, STYLUS, stylus), Pointer(11, FINGER, first),
+            ),
+        )
+        send(
+            event(
+                downTime, ++eventTime,
+                MotionEvent.ACTION_POINTER_DOWN or (2 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(10, STYLUS, stylus), Pointer(11, FINGER, first), Pointer(12, FINGER, second),
+            ),
+        )
+        for (radius in listOf(0.075f, 0.125f, 0.2f, 0.3f, 0.4f)) {
+            first = pagePoint(0.5f - radius, 0.5f)
+            second = pagePoint(0.5f + radius, 0.5f)
+            move()
+        }
+        val beforeStylusMove = viewport()
+        assertTrue("Two fingers must still zoom with a stylus down", beforeStylusMove.zoom > 1f)
+        assertTrue(added.isEmpty())
+
+        stylus = pagePoint(0.8f, 0.8f)
+        move()
+
+        val afterStylusMove = viewport()
+        assertEquals("Stylus movement must not zoom", beforeStylusMove.zoom, afterStylusMove.zoom, 0.0001f)
+        assertEquals("Stylus movement must not pan X", beforeStylusMove.panX, afterStylusMove.panX, 0.001f)
+        assertEquals("Stylus movement must not pan Y", beforeStylusMove.panY, afterStylusMove.panY, 0.001f)
+        first = pagePoint(0.15f, 0.5f)
+        second = pagePoint(0.95f, 0.5f)
+        move()
+        assertTrue("Moving both fingers must still pan", viewport().panX > afterStylusMove.panX)
+        send(
+            event(
+                downTime, ++eventTime,
+                MotionEvent.ACTION_POINTER_UP or (2 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(10, STYLUS, stylus), Pointer(11, FINGER, first), Pointer(12, FINGER, second),
+            ),
+        )
+        send(
+            event(
+                downTime, ++eventTime,
+                MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(10, STYLUS, stylus), Pointer(11, FINGER, first),
+            ),
+        )
+        send(event(downTime, ++eventTime, MotionEvent.ACTION_UP, Pointer(10, STYLUS, stylus)))
+        assertTrue(added.isEmpty())
+
+        drag(pagePoint(0.4f, 0.4f), pagePoint(0.6f, 0.6f))
+        assertEquals("A fresh stroke must work after the mixed gesture", 1, added.size)
+    }
+
+    @Test
     fun palmRejectionKeepsStylusStrokeThroughMixedPointerStream() {
         val added = mutableListOf<PageAnnotation>()
         scenario.onActivity {
@@ -297,8 +546,10 @@ class PdfPageViewInputTest {
         send(event(downTime, downTime + 50, MotionEvent.ACTION_UP, Pointer(10, STYLUS, stylusEnd)))
 
         val stroke = added.single() as InkAnnotation
-        assertEquals(NormalizedPoint(0.25f, 0.25f), stroke.points.first())
-        assertEquals(NormalizedPoint(0.75f, 0.75f), stroke.points.last())
+        assertEquals(0.25f, stroke.points.first().x, 0.000001f)
+        assertEquals(0.25f, stroke.points.first().y, 0.000001f)
+        assertEquals(0.75f, stroke.points.last().x, 0.000001f)
+        assertEquals(0.75f, stroke.points.last().y, 0.000001f)
     }
 
     @Test
@@ -349,10 +600,12 @@ class PdfPageViewInputTest {
         send(event(downTime, downTime + 60, MotionEvent.ACTION_UP, Pointer(10, STYLUS, stylusEnd)))
 
         val stroke = added.single() as InkAnnotation
-        assertEquals(NormalizedPoint(0.3f, 0.3f), stroke.points.first())
-        assertEquals(NormalizedPoint(0.8f, 0.8f), stroke.points.last())
-        assertTrue(NormalizedPoint(0.1f, 0.8f) !in stroke.points)
-        assertTrue(NormalizedPoint(0.2f, 0.7f) !in stroke.points)
+        assertEquals(0.3f, stroke.points.first().x, 0.000001f)
+        assertEquals(0.3f, stroke.points.first().y, 0.000001f)
+        assertEquals(0.8f, stroke.points.last().x, 0.000001f)
+        assertEquals(0.8f, stroke.points.last().y, 0.000001f)
+        assertFalse(stroke.points.any { abs(it.x - 0.1f) <= 0.000001f && abs(it.y - 0.8f) <= 0.000001f })
+        assertFalse(stroke.points.any { abs(it.x - 0.2f) <= 0.000001f && abs(it.y - 0.7f) <= 0.000001f })
     }
 
     @Test
@@ -556,13 +809,15 @@ class PdfPageViewInputTest {
         0,
     )
 
-    private fun createPdf(context: Context): File {
+    private fun createPdf(context: Context, pageHeight: Int = 300): File {
         val file = File(context.cacheDir, "input-${UUID.randomUUID()}.pdf")
         val document = PdfDocument()
         try {
-            val page = document.startPage(PdfDocument.PageInfo.Builder(300, 300, 1).create())
-            page.canvas.drawColor(PDF_COLOR.argb)
-            document.finishPage(page)
+            repeat(2) { index ->
+                val page = document.startPage(PdfDocument.PageInfo.Builder(300, pageHeight, index + 1).create())
+                page.canvas.drawColor(PDF_COLOR.argb)
+                document.finishPage(page)
+            }
             file.outputStream().use(document::writeTo)
         } finally {
             document.close()

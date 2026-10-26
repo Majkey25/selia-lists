@@ -44,6 +44,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -255,11 +256,6 @@ internal fun AnnotationToolbar(
                                 onClick = { onPreset(preset.id) },
                             )
                         }
-                        ToolbarControl(
-                            stringResource(R.string.eraser),
-                            R.drawable.ic_eraser_24,
-                            selected = state.tool == ReaderTool.ERASER,
-                        ) { onTool(ReaderTool.ERASER) }
                     } else {
                         orderedObjectTools(state.editor).forEach { definition ->
                             ToolbarControl(
@@ -269,6 +265,13 @@ internal fun AnnotationToolbar(
                             ) { onTool(definition.tool) }
                         }
                     }
+                }
+                if (state.group == AnnotationToolGroup.DRAW) {
+                    ToolbarControl(
+                        stringResource(R.string.eraser),
+                        R.drawable.ic_eraser_24,
+                        selected = state.tool == ReaderTool.ERASER,
+                    ) { onTool(ReaderTool.ERASER) }
                 }
                 ToolbarControl(
                     stringResource(R.string.undo),
@@ -431,16 +434,17 @@ internal fun TextAnnotationDialog(
     onDismiss: () -> Unit,
     onConfirm: (TextBoxAnnotation) -> Unit,
 ) {
-    var text by remember(initial) { mutableStateOf(initial?.text.orEmpty()) }
-    var size by remember(initial) { mutableStateOf(initial?.size ?: defaultSize) }
-    var lineHeight by remember(initial) { mutableFloatStateOf(initial?.lineHeight ?: 1.2f) }
-    var alignment by remember(initial) {
+    var text by rememberSaveable(initial?.id, bounds) { mutableStateOf(initial?.text.orEmpty()) }
+    var size by rememberSaveable(initial?.id, bounds) { mutableStateOf(initial?.size ?: defaultSize) }
+    var lineHeight by rememberSaveable(initial?.id, bounds) { mutableFloatStateOf(initial?.lineHeight ?: 1.2f) }
+    var alignment by rememberSaveable(initial?.id, bounds) {
         mutableStateOf(initial?.alignment ?: AnnotationTextAlignment.START)
     }
-    var color by remember(initial) { mutableStateOf(initial?.color ?: defaultColor) }
-    var opacity by remember(initial) { mutableIntStateOf(initial?.opacity ?: defaultOpacity) }
-    var colorOpen by remember { mutableStateOf(false) }
-    var moreOpen by remember { mutableStateOf(false) }
+    var colorArgb by rememberSaveable(initial?.id, bounds) { mutableIntStateOf((initial?.color ?: defaultColor).argb) }
+    val color = AnnotationColor(colorArgb)
+    var opacity by rememberSaveable(initial?.id, bounds) { mutableIntStateOf(initial?.opacity ?: defaultOpacity) }
+    var colorOpen by rememberSaveable(initial?.id, bounds) { mutableStateOf(false) }
+    var moreOpen by rememberSaveable(initial?.id, bounds) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -522,7 +526,7 @@ internal fun TextAnnotationDialog(
             onDismiss = { colorOpen = false },
             onEyedropper = null,
             onConfirm = { nextColor, nextOpacity ->
-                color = nextColor
+                colorArgb = nextColor.argb
                 opacity = nextOpacity
                 colorOpen = false
             },
