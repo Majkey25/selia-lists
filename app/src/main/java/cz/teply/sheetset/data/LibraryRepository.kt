@@ -14,6 +14,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
@@ -158,9 +159,13 @@ class LibraryRepository(private val root: File) {
             mutex.withLock {
                 val catalog = loadCatalog()
                 val score = catalog.scores.firstOrNull { it.id == scoreId } ?: return@withLock
+                val files = listOf(annotationFile(scoreId), File(scoresDirectory, score.fileName))
+                for (file in files) {
+                    if (file.exists() && (!file.isFile || !file.delete())) {
+                        throw IOException("Could not delete score file: ${file.name}")
+                    }
+                }
                 writeCatalog(catalog.deleteScore(scoreId))
-                File(scoresDirectory, score.fileName).delete()
-                annotationFile(scoreId).delete()
             }
         }
     }

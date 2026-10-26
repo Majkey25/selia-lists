@@ -16,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 
 class LibraryRepositoryTest {
@@ -125,6 +126,7 @@ class LibraryRepositoryTest {
         repeat(4) { index -> repository.createSetlist("Set ${index + 1}") }
         val firstSetlist = repository.load().setlists.first()
         repository.addScoreToSetlist(firstSetlist.id, score.id)
+        repository.saveAnnotations(score.id, DocumentAnnotations())
 
         repository.deleteScore(score.id)
 
@@ -133,6 +135,49 @@ class LibraryRepositoryTest {
         assertTrue(reloaded.setlists.all { score.id !in it.scoreIds })
         assertTrue(reloaded.scores.isEmpty())
         assertTrue(!File(root, "scores/${score.fileName}").exists())
+        assertTrue(!File(root, "annotations/${score.id}.json").exists())
+    }
+
+    @Test
+    fun failedFileDeletionKeepsScoreVisibleAndCanBeRetried() = runBlocking {
+        val source = createPdf("song.pdf", pages = 1)
+        val repository = LibraryRepository(root)
+        val score = repository.importPdf(
+            PdfImport("Song.pdf", "application/pdf", source.length(), source::inputStream),
+        )
+        val setlist = repository.createSetlist("Show")
+        repository.addScoreToSetlist(setlist.id, score.id)
+        val blockedFile = File(root, "annotations/${score.id}.json").apply { mkdirs() }
+        val blocker = File(blockedFile, "cannot-delete-directory").apply { writeText("private") }
+
+        assertThrows(IOException::class.java) { runBlocking { repository.deleteScore(score.id) } }
+
+        val retained = LibraryRepository(root).load()
+        assertEquals(listOf(score), retained.scores)
+        assertEquals(listOf(score.id), retained.setlists.single().scoreIds)
+        assertTrue(repository.pdfFile(score).isFile)
+        assertTrue(blocker.exists())
+
+        assertTrue(blocker.delete())
+        assertTrue(blockedFile.delete())
+        repository.deleteScore(score.id)
+        assertTrue(LibraryRepository(root).load().scores.isEmpty())
+        assertTrue(!File(root, "scores/${score.fileName}").exists())
+    }
+
+    @Test
+    fun scoreDeletionToleratesFilesAlreadyRemoved() = runBlocking {
+        val source = createPdf("song.pdf", pages = 1)
+        val repository = LibraryRepository(root)
+        val score = repository.importPdf(
+            PdfImport("Song.pdf", "application/pdf", source.length(), source::inputStream),
+        )
+        assertTrue(repository.pdfFile(score).delete())
+
+        repository.deleteScore(score.id)
+        repository.deleteScore(score.id)
+
+        assertTrue(LibraryRepository(root).load().scores.isEmpty())
     }
 
     @Test

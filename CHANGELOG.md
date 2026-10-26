@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## [0.5.0-alpha.11] - 2026-10-05
+
+### Fixed
+
+- Keep scores visible for retry when their private files cannot be deleted, and report the failed operation.
+- Include the Noto Music font's copyright and license in APK assets.
+
+## [0.5.0-alpha.10] - 2026-09-22
+
+### Fixed
+
+- Matched the launcher, themed launcher, store icon, and website favicon to SeliaScan's white document artwork on a black background.
+
 ## [0.5.0-alpha.9] - 2026-08-29
 
 ### Changed

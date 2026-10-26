@@ -1,6 +1,6 @@
 # Google Play Console publication worksheet
 
-Use these answers only for the verified SeliaLists `0.5.0-alpha.9` closed-test AAB. Re-audit the artifact if the manifest, dependencies, external links, or data handling change.
+Use these answers only for the verified SeliaLists `0.5.0-alpha.10` closed-test AAB. Re-audit the artifact if the manifest, dependencies, external links, or data handling change.
 
 ## App identity
 
@@ -8,8 +8,8 @@ Use these answers only for the verified SeliaLists `0.5.0-alpha.9` closed-test A
 |---|---|
 | App name | `SeliaLists` |
 | Package | `com.majkeylab.sheetset` |
-| Version code | `14` |
-| Version name | `0.5.0-alpha.9` |
+| Version code | `15` |
+| Version name | `0.5.0-alpha.10` |
 | Default language | English (United States) |
 | App or game | App |
 | Category | Music & Audio |
