@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## [0.5.0-alpha.10] - 2026-09-22
+
+### Fixed
+
+- Matched the launcher, themed launcher, store icon, and website favicon to SeliaScan's white document artwork on a black background.
+
 ## [0.5.0-alpha.9] - 2026-08-29
 
 ### Changed
