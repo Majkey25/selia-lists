@@ -8,6 +8,7 @@ import android.graphics.pdf.PdfDocument
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -16,11 +17,14 @@ import cz.teply.sheetset.MainActivity
 import cz.teply.sheetset.settings.PageFit
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.min
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -281,6 +285,43 @@ class PdfPageViewInputTest {
     }
 
     @Test
+    fun halfPageResizeKeepsSelectedHalfAnchoredAndReusesBitmap() {
+        val tallSource = createPdf(ApplicationProvider.getApplicationContext(), pageHeight = 1_200)
+        try {
+            scenario.onActivity {
+                view.layout(0, 0, 300, 600)
+                view.pageFit = PageFit.WIDTH
+                view.showPage(tallSource, 0)
+            }
+            awaitRenderQueue()
+            val bitmap = renderedBitmap()
+            for (part in 0..1) {
+                scenario.onActivity {
+                    view.layout(0, 0, 300, 600)
+                    view.setHalfPagePart(part, halfPageMode = true)
+                }
+                awaitRenderQueue()
+                assertEquals(if (part == 0) 300f else -300f, viewport().panY, 0.001f)
+
+                scenario.onActivity { view.layout(0, 0, 300, 300) }
+                awaitRenderQueue()
+
+                val resized = viewport()
+                assertEquals(
+                    "The selected half must stay anchored after height shrinks",
+                    if (part == 0) 450f else -450f,
+                    resized.panY,
+                    0.001f,
+                )
+                assertEquals(1f, resized.zoom, 0.0001f)
+                assertSame("Half-page resizing must reuse the rendered bitmap", bitmap, renderedBitmap())
+            }
+        } finally {
+            tallSource.delete()
+        }
+    }
+
+    @Test
     fun renderFailureReportsErrorAndClearsPreviousPage() {
         val failed = java.util.concurrent.CountDownLatch(1)
         scenario.onActivity {
@@ -306,6 +347,85 @@ class PdfPageViewInputTest {
             awaitRenderedPage()
         } finally {
             scenario.onActivity { activity -> activity.setContentView(view) }
+        }
+    }
+
+    @Test
+    fun repeatedResizePreservesZoomAndRenderedBitmap() {
+        awaitRenderQueue()
+        val downTime = SystemClock.uptimeMillis()
+        var eventTime = downTime
+        var first = pagePoint(0.45f, 0.5f)
+        var second = pagePoint(0.55f, 0.5f)
+        send(event(downTime, eventTime, MotionEvent.ACTION_DOWN, Pointer(0, FINGER, first)))
+        send(
+            event(
+                downTime, ++eventTime,
+                MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(0, FINGER, first), Pointer(1, FINGER, second),
+            ),
+        )
+        for (radius in listOf(0.075f, 0.125f, 0.2f, 0.3f, 0.4f)) {
+            first = pagePoint(0.5f - radius, 0.5f)
+            second = pagePoint(0.5f + radius, 0.5f)
+            eventTime += 20
+            send(
+                event(
+                    downTime, eventTime, MotionEvent.ACTION_MOVE,
+                    Pointer(0, FINGER, first), Pointer(1, FINGER, second),
+                ),
+            )
+        }
+        send(
+            event(
+                downTime, ++eventTime,
+                MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(0, FINGER, first), Pointer(1, FINGER, second),
+            ),
+        )
+        send(event(downTime, ++eventTime, MotionEvent.ACTION_UP, Pointer(0, FINGER, first)))
+        val before = viewport()
+        val bitmap = renderedBitmap()
+        assertTrue("The page must be zoomed before resizing", before.zoom > 1f)
+
+        repeat(3) {
+            scenario.onActivity { view.layout(0, 0, view.width - 10, view.height - 10) }
+            awaitRenderQueue()
+            val after = viewport()
+            val resizedBitmap = renderedBitmap()
+            assertEquals(
+                "Resize must preserve zoom; bitmap reused=${bitmap === resizedBitmap}",
+                before.zoom,
+                after.zoom,
+                0.0001f,
+            )
+            assertSame("Resize must reuse the rendered bitmap", bitmap, resizedBitmap)
+            assertFalse("The displayed bitmap must remain usable", bitmap.isRecycled)
+        }
+    }
+
+    @Test
+    fun detachedAndReattachedViewRendersCurrentAndNextPage() {
+        val replacement = createPdf(ApplicationProvider.getApplicationContext(), secondPageColor = Color.RED)
+        try {
+            scenario.onActivity { view.showPage(replacement, 0) }
+            awaitRenderedPage()
+            awaitRenderQueue()
+            scenario.onActivity {
+                assertTrue(view.isAttachedToWindow)
+                val parent = view.parent as ViewGroup
+                val index = parent.indexOfChild(view)
+                val layoutParams = view.layoutParams
+                parent.removeView(view)
+                assertFalse(view.isAttachedToWindow)
+                parent.addView(view, index, layoutParams)
+                assertTrue(view.isAttachedToWindow)
+            }
+            awaitRenderedPage()
+            scenario.onActivity { view.showPage(replacement, 1) }
+            awaitRenderedPage(Color.RED)
+        } finally {
+            replacement.delete()
         }
     }
 
@@ -718,12 +838,32 @@ class PdfPageViewInputTest {
         assertEquals(0.5f, points.single().y, 0.001f)
     }
 
-    private fun awaitRenderedPage() {
+    private fun awaitRenderQueue() {
+        instrumentation.waitForIdleSync()
+        lateinit var executor: ExecutorService
+        scenario.onActivity {
+            executor = PdfPageView::class.java.getDeclaredField("executor")
+                .apply { isAccessible = true }.get(view) as ExecutorService
+        }
+        executor.submit(Runnable {}).get(5, TimeUnit.SECONDS)
+        instrumentation.waitForIdleSync()
+    }
+
+    private fun renderedBitmap(): Bitmap {
+        var bitmap: Bitmap? = null
+        scenario.onActivity {
+            bitmap = PdfPageView::class.java.getDeclaredField("bitmap")
+                .apply { isAccessible = true }.get(view) as Bitmap?
+        }
+        return requireNotNull(bitmap)
+    }
+
+    private fun awaitRenderedPage(expectedColor: Int = PDF_COLOR.argb) {
         val deadline = SystemClock.uptimeMillis() + 5_000
-        while (pageCenterColor() != PDF_COLOR.argb && SystemClock.uptimeMillis() < deadline) {
+        while (pageCenterColor() != expectedColor && SystemClock.uptimeMillis() < deadline) {
             SystemClock.sleep(20)
         }
-        assertEquals(PDF_COLOR.argb, pageCenterColor())
+        assertEquals(expectedColor, pageCenterColor())
     }
 
     private fun pageCenterColor(): Int {
@@ -809,13 +949,17 @@ class PdfPageViewInputTest {
         0,
     )
 
-    private fun createPdf(context: Context, pageHeight: Int = 300): File {
+    private fun createPdf(
+        context: Context,
+        pageHeight: Int = 300,
+        secondPageColor: Int = PDF_COLOR.argb,
+    ): File {
         val file = File(context.cacheDir, "input-${UUID.randomUUID()}.pdf")
         val document = PdfDocument()
         try {
             repeat(2) { index ->
                 val page = document.startPage(PdfDocument.PageInfo.Builder(300, pageHeight, index + 1).create())
-                page.canvas.drawColor(PDF_COLOR.argb)
+                page.canvas.drawColor(if (index == 0) PDF_COLOR.argb else secondPageColor)
                 document.finishPage(page)
             }
             file.outputStream().use(document::writeTo)
