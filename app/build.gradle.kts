@@ -25,8 +25,8 @@ android {
         applicationId = "com.majkeylab.sheetset"
         minSdk = 29
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.5.0-alpha.16"
+        versionCode = 23
+        versionName = "0.5.0-alpha.18"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "EXTERNAL_DONATIONS_ENABLED", (distributionChannel == "github").toString())
     }
@@ -60,7 +60,8 @@ android {
         }
         release {
             signingConfig = signingConfigs.findByName("release")
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

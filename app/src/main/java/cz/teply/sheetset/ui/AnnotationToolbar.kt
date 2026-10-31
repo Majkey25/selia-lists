@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -67,6 +68,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import cz.teply.sheetset.R
 import cz.teply.sheetset.pdf.AnnotationColor
 import cz.teply.sheetset.pdf.AnnotationEditorSettings
@@ -448,6 +450,8 @@ internal fun TextAnnotationDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        modifier = Modifier.imePadding(),
+        properties = DialogProperties(decorFitsSystemWindows = false),
         title = { Text(stringResource(if (initial == null) R.string.text_box else R.string.edit_text)) },
         text = {
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {

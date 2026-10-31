@@ -46,7 +46,7 @@ enum class ReaderTool {
 }
 
 class PdfPageView(context: Context) : View(context) {
-    private val executor = Executors.newSingleThreadExecutor()
+    private var executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
@@ -225,7 +225,11 @@ class PdfPageView(context: Context) : View(context) {
 
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
-        if (width != oldWidth || height != oldHeight) renderPage()
+        if (width == oldWidth && height == oldHeight) return
+        if (bitmap == null) renderPage()
+        else if (halfPageMode && pageFit == PageFit.WIDTH) applyHalfPagePart()
+        else clampPan()
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -305,6 +309,14 @@ class PdfPageView(context: Context) : View(context) {
         super.performClick()
         onPageClick()
         return true
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (executor.isShutdown) {
+            executor = Executors.newSingleThreadExecutor()
+            renderPage()
+        }
     }
 
     override fun onDetachedFromWindow() {
