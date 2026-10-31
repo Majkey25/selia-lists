@@ -1,1 +1,1 @@
-# No project-specific rules.
+-repackageclasses
