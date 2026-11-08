@@ -36,6 +36,7 @@ class SettingsStore(private val preferences: SharedPreferences) {
             textSize = preferences.enum("text_size", defaults.textSize),
             readerLayout = preferences.enum("reader_layout", defaults.readerLayout),
             themeMode = preferences.enum("theme_mode", defaults.themeMode),
+            themePalette = preferences.enum("theme_palette", defaults.themePalette),
             editor = editor,
         )
     }
@@ -53,6 +54,7 @@ class SettingsStore(private val preferences: SharedPreferences) {
             .putString("text_size", settings.textSize.name)
             .putString("reader_layout", settings.readerLayout.name)
             .putString("theme_mode", settings.themeMode.name)
+            .putString("theme_palette", settings.themePalette.name)
             .putString(EDITOR_JSON_KEY, AnnotationEditorSettingsJson.encode(settings.editor))
             .apply()
     }

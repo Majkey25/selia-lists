@@ -130,7 +130,16 @@
     <string name="backup_restore_summary">Utwórz, udostępnij lub przywróć kopię ZIP</string>
     <string name="language_summary">Wybierz język aplikacji</string>
     <string name="appearance">Wygląd</string>
-    <string name="appearance_summary">Wybierz jasny lub ciemny motyw</string>
+    <string name="appearance_summary">Wybierz tryb i motyw kolorystyczny</string>
+    <string name="theme_mode">Tryb</string>
+    <string name="theme_system">Systemowy</string>
+    <string name="theme_palette">Motyw kolorystyczny</string>
+    <string name="theme_preview_summary">Każdy motyw ma jasny i ciemny podgląd.</string>
+    <string name="theme_monochrome">Monochromatyczny</string>
+    <string name="theme_ocean">Ocean</string>
+    <string name="theme_grove">Gaj</string>
+    <string name="theme_ember">Żar</string>
+    <string name="theme_iris">Irys</string>
     <string name="theme_light">Jasny</string>
     <string name="theme_dark">Ciemny</string>
     <string name="reader_tab_bookmark">Zakładka</string>

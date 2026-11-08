@@ -126,7 +126,16 @@
     <string name="backup_restore_summary">ZIP-Sicherung erstellen, teilen oder wiederherstellen</string>
     <string name="language_summary">App-Sprache auswählen</string>
     <string name="appearance">Erscheinungsbild</string>
-    <string name="appearance_summary">Helles oder dunkles Design auswählen</string>
+    <string name="appearance_summary">Modus und Farbschema auswählen</string>
+    <string name="theme_mode">Modus</string>
+    <string name="theme_system">System</string>
+    <string name="theme_palette">Farbschema</string>
+    <string name="theme_preview_summary">Jedes Farbschema hat eine helle und eine dunkle Vorschau.</string>
+    <string name="theme_monochrome">Monochrom</string>
+    <string name="theme_ocean">Ozean</string>
+    <string name="theme_grove">Hain</string>
+    <string name="theme_ember">Glut</string>
+    <string name="theme_iris">Iris</string>
     <string name="theme_light">Hell</string>
     <string name="theme_dark">Dunkel</string>
     <string name="reader_tab_bookmark">Lesezeichen</string>

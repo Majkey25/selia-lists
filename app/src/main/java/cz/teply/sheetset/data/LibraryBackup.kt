@@ -9,6 +9,7 @@ import cz.teply.sheetset.settings.PageFit
 import cz.teply.sheetset.settings.ReaderDefaultTool
 import cz.teply.sheetset.settings.ReaderLayout
 import cz.teply.sheetset.settings.ThemeMode
+import cz.teply.sheetset.settings.ThemePalette
 import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
@@ -314,7 +315,10 @@ private fun AppSettings.toJson(): JSONObject = JSONObject()
     .put("defaultTool", defaultTool.name)
     .put("textSize", textSize.name)
     .put("readerLayout", readerLayout.name)
-    .put("themeMode", themeMode.name)
+    // Older releases only accept LIGHT or DARK in this field.
+    .put("themeMode", if (themeMode == ThemeMode.SYSTEM) ThemeMode.LIGHT.name else themeMode.name)
+    .put("followSystemTheme", themeMode == ThemeMode.SYSTEM)
+    .put("themePalette", themePalette.name)
     .put("editor", JSONObject(AnnotationEditorSettingsJson.encode(editor)))
 
 private fun JSONObject.toSettings(version: Int): AppSettings = try {
@@ -326,6 +330,7 @@ private fun JSONObject.toSettings(version: Int): AppSettings = try {
     }
     val legacyEditorUi = editorRaw?.let(AnnotationEditorSettingsJson::isLegacy) ?: false
     val defaultTool = ReaderDefaultTool.valueOf(getString("defaultTool"))
+    val themeMode = if (has("themeMode")) ThemeMode.valueOf(getString("themeMode")) else defaults.themeMode
     AppSettings(
         keepScreenAwake = getBoolean("keepScreenAwake"),
         pageFit = PageFit.valueOf(getString("pageFit")),
@@ -343,11 +348,9 @@ private fun JSONObject.toSettings(version: Int): AppSettings = try {
         } else {
             defaults.readerLayout
         },
-        themeMode = if (has("themeMode")) {
-            ThemeMode.valueOf(getString("themeMode"))
-        } else {
-            defaults.themeMode
-        },
+        themeMode = if (optBoolean("followSystemTheme")) ThemeMode.SYSTEM else themeMode,
+        themePalette = ThemePalette.entries.firstOrNull { it.name == optString("themePalette") }
+            ?: defaults.themePalette,
         editor = editorRaw?.let(AnnotationEditorSettingsJson::decode) ?: defaults.editor,
     )
 } catch (error: Exception) {

@@ -130,7 +130,16 @@
     <string name="backup_restore_summary">Vytvořit, sdílet nebo obnovit zálohu ZIP</string>
     <string name="language_summary">Vyberte jazyk aplikace</string>
     <string name="appearance">Vzhled</string>
-    <string name="appearance_summary">Vyberte světlý nebo tmavý vzhled</string>
+    <string name="appearance_summary">Vyberte režim a barevný motiv</string>
+    <string name="theme_mode">Režim</string>
+    <string name="theme_system">Podle systému</string>
+    <string name="theme_palette">Barevný motiv</string>
+    <string name="theme_preview_summary">Každý motiv má světlý a tmavý náhled.</string>
+    <string name="theme_monochrome">Černobílý</string>
+    <string name="theme_ocean">Oceán</string>
+    <string name="theme_grove">Háj</string>
+    <string name="theme_ember">Žár</string>
+    <string name="theme_iris">Kosatec</string>
     <string name="theme_light">Světlý</string>
     <string name="theme_dark">Tmavý</string>
     <string name="reader_tab_bookmark">Záložka</string>

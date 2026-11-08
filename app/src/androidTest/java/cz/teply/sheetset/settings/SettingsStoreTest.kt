@@ -26,6 +26,7 @@ class SettingsStoreTest {
             .putString("page_fit", "BROKEN")
             .putString("pen_width", "MISSING")
             .putString("reader_layout", "UNKNOWN")
+            .putString("theme_palette", "UNKNOWN")
             .putBoolean("keep_screen_awake", false)
             .commit()
 
@@ -45,7 +46,8 @@ class SettingsStoreTest {
             defaultTool = ReaderDefaultTool.PEN,
             textSize = AnnotationTextSize.LARGE,
             readerLayout = ReaderLayout.HALF,
-            themeMode = ThemeMode.DARK,
+            themeMode = ThemeMode.SYSTEM,
+            themePalette = ThemePalette.IRIS,
         )
 
         val store = SettingsStore(preferences)
@@ -54,6 +56,15 @@ class SettingsStoreTest {
         assertEquals(expected, store.load())
         assertFalse(preferences.contains("pen_width"))
         assertFalse(preferences.contains("highlighter_strength"))
+    }
+
+    @Test
+    fun existingDarkPreferenceKeepsMonochrome() {
+        preferences.edit().putString("theme_mode", "DARK").commit()
+
+        val settings = SettingsStore(preferences).load()
+        assertEquals(ThemeMode.DARK, settings.themeMode)
+        assertEquals(ThemePalette.MONOCHROME, settings.themePalette)
     }
 
     @Test
