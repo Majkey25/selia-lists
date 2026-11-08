@@ -3,11 +3,18 @@ package cz.teply.sheetset
 import android.app.Activity
 import android.app.Instrumentation
 import android.content.Intent
+import android.content.res.Configuration
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -38,9 +45,11 @@ import cz.teply.sheetset.pdf.AnnotationEditorSettings
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.ReaderLayout
 import cz.teply.sheetset.settings.ThemeMode
+import cz.teply.sheetset.settings.ThemePalette
 import cz.teply.sheetset.ui.SheetSetActions
 import cz.teply.sheetset.ui.SheetSetApp
 import cz.teply.sheetset.ui.SheetSetTheme
+import cz.teply.sheetset.ui.isDarkTheme
 import cz.teply.sheetset.ui.AppDestination
 import cz.teply.sheetset.ui.SettingsDrawer
 import cz.teply.sheetset.ui.SettingsSwitchRow
@@ -75,35 +84,56 @@ class SettingsFlowTest {
     }
 
     @Test
-    fun appearanceChoiceUpdatesThemeMode() {
+    fun appearanceChoicesApplyPaletteAndModeImmediately() {
         var settings by mutableStateOf(AppSettings())
+        var deviceDark by mutableStateOf(false)
         var updates = 0
+        var appliedPrimary = Color.Unspecified
         composeRule.setContent {
-            SheetSetTheme {
-                SheetSetApp(
-                    LibraryUiState(settings = settings),
-                    SheetSetActions(
-                        updateSettings = {
-                            settings = it
-                            updates++
-                        },
-                    ),
-                )
+            val actual = LocalConfiguration.current
+            val simulated = remember(actual, deviceDark) {
+                Configuration(actual).apply {
+                    val nightMode = if (deviceDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+                    uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or nightMode
+                }
+            }
+            CompositionLocalProvider(LocalConfiguration provides simulated) {
+                SheetSetTheme(isDarkTheme(settings.themeMode), settings.themePalette) {
+                    val primary = MaterialTheme.colorScheme.primary
+                    SideEffect { appliedPrimary = primary }
+                    SheetSetApp(
+                        LibraryUiState(settings = settings),
+                        SheetSetActions(updateSettings = { settings = it; updates++ }),
+                    )
+                }
             }
         }
 
         openMenuPage("Appearance")
         val radioRole = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton)
-        composeRule.onAllNodes(radioRole and hasClickAction(), useUnmergedTree = true)
-            .assertCountEquals(2)
-        composeRule.onNodeWithText("Light").assertIsSelected()
+        composeRule.onNodeWithText("Light").assert(radioRole).assertIsSelected()
+        composeRule.onNodeWithText("System").assert(radioRole).assertIsNotSelected()
         composeRule.onNodeWithText("Dark").assert(radioRole).assertIsNotSelected()
+            .performClick().assertIsSelected()
+        val monochrome = composeRule.runOnIdle { appliedPrimary }
+        composeRule.onNodeWithText("Monochrome").performScrollTo().assertIsSelected()
+        composeRule.onNodeWithText("Ocean").performScrollTo().assert(radioRole).assertIsNotSelected()
             .performClick().assertIsSelected()
 
         composeRule.runOnIdle {
             assertEquals(ThemeMode.DARK, settings.themeMode)
-            assertEquals(1, updates)
+            assertEquals(ThemePalette.OCEAN, settings.themePalette)
+            assertEquals(Color(0xFF91C6FF), appliedPrimary)
+            assertFalse(monochrome == appliedPrimary)
+            assertEquals(2, updates)
         }
+        composeRule.onNodeWithText("System").performScrollTo().performClick().assertIsSelected()
+        composeRule.runOnIdle {
+            assertEquals(ThemeMode.SYSTEM, settings.themeMode)
+            assertEquals(Color(0xFF195BA3), appliedPrimary)
+            deviceDark = true
+        }
+        composeRule.runOnIdle { assertEquals(Color(0xFF91C6FF), appliedPrimary) }
     }
 
     @Test

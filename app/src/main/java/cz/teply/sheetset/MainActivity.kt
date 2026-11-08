@@ -19,11 +19,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cz.teply.sheetset.settings.AppLanguages
-import cz.teply.sheetset.settings.ThemeMode
 import cz.teply.sheetset.ui.SheetSetActions
 import cz.teply.sheetset.ui.SheetSetApp
 import cz.teply.sheetset.ui.SheetSetTheme
 import cz.teply.sheetset.ui.WindowLayout
+import cz.teply.sheetset.ui.isDarkTheme
 
 class MainActivity : AppCompatActivity() {
     private val viewModel by viewModels<SheetSetViewModel>()
@@ -35,14 +35,14 @@ class MainActivity : AppCompatActivity() {
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
             val view = LocalView.current
+            val darkTheme = isDarkTheme(state.settings.themeMode)
             SideEffect {
-                val lightBars = state.settings.themeMode == ThemeMode.LIGHT
                 WindowCompat.getInsetsController(window, view).apply {
-                    isAppearanceLightStatusBars = lightBars
-                    isAppearanceLightNavigationBars = lightBars
+                    isAppearanceLightStatusBars = !darkTheme
+                    isAppearanceLightNavigationBars = !darkTheme
                 }
             }
-            SheetSetTheme(state.settings.themeMode) {
+            SheetSetTheme(darkTheme, state.settings.themePalette) {
                 BoxWithConstraints {
                     SheetSetApp(
                         state = state,

@@ -17,6 +17,7 @@ import cz.teply.sheetset.settings.AnnotationTextSize
 import cz.teply.sheetset.settings.PageFit
 import cz.teply.sheetset.settings.ReaderLayout
 import cz.teply.sheetset.settings.ThemeMode
+import cz.teply.sheetset.settings.ThemePalette
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -152,11 +153,18 @@ class LibraryBackupTest {
                 pageFit = PageFit.WIDTH,
                 pageTurnTaps = false,
                 readerLayout = ReaderLayout.HALF,
-                themeMode = ThemeMode.DARK,
+                themeMode = ThemeMode.SYSTEM,
+                themePalette = ThemePalette.EMBER,
                 editor = expectedEditor,
             )
             val archive = ByteArrayOutputStream()
             source.createBackup(archive, settings, "cs")
+            ZipInputStream(ByteArrayInputStream(archive.toByteArray())).use { zip ->
+                check(generateSequence { zip.nextEntry }.any { it.name == "manifest.json" })
+                val exportedSettings = JSONObject(zip.readBytes().toString(Charsets.UTF_8)).getJSONObject("settings")
+                assertEquals("LIGHT", exportedSettings.getString("themeMode"))
+                assertTrue(exportedSettings.getBoolean("followSystemTheme"))
+            }
 
             val restored = LibraryRepository(restoreRoot)
             val metadata = requireNotNull(
@@ -459,6 +467,7 @@ class LibraryBackupTest {
             val settings = requireNotNull(restored).settings
             assertEquals(ReaderLayout.SINGLE, settings.readerLayout)
             assertEquals(ThemeMode.LIGHT, settings.themeMode)
+            assertEquals(ThemePalette.MONOCHROME, settings.themePalette)
             assertEquals(AnnotationEditorSettings.defaults(), settings.editor)
             pdf.delete()
         }
@@ -479,6 +488,8 @@ class LibraryBackupTest {
                             .remove("editor")
                         manifest.getJSONObject("settings")
                             .remove("themeMode")
+                        manifest.getJSONObject("settings").remove("followSystemTheme")
+                        manifest.getJSONObject("settings").remove("themePalette")
                         zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
                     } else {
                         input.copyTo(zip)

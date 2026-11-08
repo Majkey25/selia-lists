@@ -1,6 +1,8 @@
 package cz.teply.sheetset.ui
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -8,12 +10,14 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cz.teply.sheetset.settings.ThemeMode
+import cz.teply.sheetset.settings.ThemePalette
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF111111),
@@ -90,6 +94,66 @@ private val DarkColors = darkColorScheme(
     scrim = Color.Black,
 )
 
+private val PaletteColors = mapOf(
+    ThemePalette.OCEAN to (
+        LightColors.tinted(0xFF195BA3, 0xFFF0F6FD, 0xFFF8FBFF) to
+            DarkColors.tinted(0xFF91C6FF, 0xFF0D1724, 0xFF142234)
+        ),
+    ThemePalette.GROVE to (
+        LightColors.tinted(0xFF26634B, 0xFFEFF6EE, 0xFFF7FBF6) to
+            DarkColors.tinted(0xFF98D4AC, 0xFF0E1A15, 0xFF17271E)
+        ),
+    ThemePalette.EMBER to (
+        LightColors.tinted(0xFF923F27, 0xFFFCF0E7, 0xFFFFF8F1) to
+            DarkColors.tinted(0xFFFFB595, 0xFF201510, 0xFF2D201A)
+        ),
+    ThemePalette.IRIS to (
+        LightColors.tinted(0xFF6543A0, 0xFFF4EFFB, 0xFFFBF7FF) to
+            DarkColors.tinted(0xFFC9AEFF, 0xFF191324, 0xFF241B32)
+        ),
+)
+
+private fun ColorScheme.tinted(accentValue: Long, backgroundValue: Long, surfaceValue: Long): ColorScheme {
+    val accent = Color(accentValue)
+    val canvas = Color(backgroundValue)
+    val panel = Color(surfaceValue)
+    val selection = lerp(panel, accent, 0.16f)
+    return copy(
+        primary = accent,
+        secondary = accent,
+        tertiary = accent,
+        primaryContainer = selection,
+        secondaryContainer = selection,
+        tertiaryContainer = selection,
+        onPrimaryContainer = onSurface,
+        onSecondaryContainer = onSurface,
+        onTertiaryContainer = onSurface,
+        background = canvas,
+        surface = panel,
+        surfaceTint = accent,
+        surfaceVariant = lerp(panel, accent, 0.08f),
+        surfaceBright = lerp(panel, accent, 0.12f),
+        surfaceDim = canvas,
+        surfaceContainerLowest = canvas,
+        surfaceContainerLow = panel,
+        surfaceContainer = lerp(panel, accent, 0.04f),
+        surfaceContainerHigh = lerp(panel, accent, 0.08f),
+        surfaceContainerHighest = lerp(panel, accent, 0.12f),
+    )
+}
+
+internal fun themeColors(palette: ThemePalette, dark: Boolean): ColorScheme {
+    val colors = PaletteColors[palette]
+    return if (dark) colors?.second ?: DarkColors else colors?.first ?: LightColors
+}
+
+@Composable
+internal fun isDarkTheme(mode: ThemeMode): Boolean = when (mode) {
+    ThemeMode.LIGHT -> false
+    ThemeMode.DARK -> true
+    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+}
+
 private val MonochromeShapes = Shapes(
     extraSmall = RoundedCornerShape(2.dp),
     small = RoundedCornerShape(4.dp),
@@ -139,11 +203,12 @@ private val SheetTypography = Typography(
 
 @Composable
 fun SheetSetTheme(
-    themeMode: ThemeMode = ThemeMode.LIGHT,
+    darkTheme: Boolean = false,
+    palette: ThemePalette = ThemePalette.MONOCHROME,
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(
-        colorScheme = if (themeMode == ThemeMode.DARK) DarkColors else LightColors,
+        colorScheme = themeColors(palette, darkTheme),
         typography = SheetTypography,
         shapes = MonochromeShapes,
         content = content,

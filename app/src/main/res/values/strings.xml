@@ -126,7 +126,16 @@
     <string name="backup_restore_summary">Create, share, or restore a ZIP backup</string>
     <string name="language_summary">Choose the app language</string>
     <string name="appearance">Appearance</string>
-    <string name="appearance_summary">Choose a light or dark theme</string>
+    <string name="appearance_summary">Choose a mode and color theme</string>
+    <string name="theme_mode">Mode</string>
+    <string name="theme_system">System</string>
+    <string name="theme_palette">Color theme</string>
+    <string name="theme_preview_summary">Each theme has a light and a dark preview.</string>
+    <string name="theme_monochrome">Monochrome</string>
+    <string name="theme_ocean">Ocean</string>
+    <string name="theme_grove">Grove</string>
+    <string name="theme_ember">Ember</string>
+    <string name="theme_iris">Iris</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="reader_tab_bookmark">Bookmark</string>

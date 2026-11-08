@@ -78,7 +78,6 @@ import cz.teply.sheetset.settings.AppLanguages
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.PageFit
 import cz.teply.sheetset.settings.ReaderLayout
-import cz.teply.sheetset.settings.ThemeMode
 import kotlinx.coroutines.launch
 
 private enum class DrawerScreen {
@@ -249,27 +248,6 @@ private fun DrawerMenu(
             R.drawable.ic_info_24,
         ) { onScreen(DrawerScreen.APP_DETAILS) }
         Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun AppearanceSettings(
-    settings: AppSettings,
-    onBack: () -> Unit,
-    onSettings: (AppSettings) -> Unit,
-) {
-    SettingsPage(R.string.appearance, onBack) {
-        item { SettingsSectionTitle(R.string.appearance) }
-        item {
-            SettingsRadioRow(R.string.theme_light, settings.themeMode == ThemeMode.LIGHT) {
-                onSettings(settings.copy(themeMode = ThemeMode.LIGHT))
-            }
-        }
-        item {
-            SettingsRadioRow(R.string.theme_dark, settings.themeMode == ThemeMode.DARK) {
-                onSettings(settings.copy(themeMode = ThemeMode.DARK))
-            }
-        }
     }
 }
 
