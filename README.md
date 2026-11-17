@@ -42,7 +42,7 @@ SeliaLists requires Android 10 or newer.
 
 ## Build
 
-Requirements: JDK 17 and Android SDK 36.
+Requirements: JDK 17 and Android SDK 37.
 
 ```powershell
 .\gradlew.bat testDebugUnitTest lintDebug assembleDebug --no-daemon --console=plain
