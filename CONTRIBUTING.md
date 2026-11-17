@@ -2,7 +2,7 @@
 
 ## Set up
 
-Use JDK 17 and Android SDK 36. Add your local SDK path to the ignored `local.properties` file:
+Use JDK 17 and Android SDK 37. Add your local SDK path to the ignored `local.properties` file:
 
 ```properties
 sdk.dir=C\:/path/to/Android/Sdk

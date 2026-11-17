@@ -13,10 +13,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
+          problem-matcher: true
       - uses: gradle/actions/setup-gradle@v6
       - name: Verify and build
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon --console=plain
