@@ -97,6 +97,8 @@
     <string name="undo">Vrátit</string>
     <string name="redo">Znovu</string>
     <string name="done">Hotovo</string>
+    <string name="hide_editing_tools">Skrýt nástroje</string>
+    <string name="show_editing_tools">Zobrazit nástroje</string>
     <string name="previous">Předchozí</string>
     <string name="next">Další</string>
     <string name="pdf_page">Stránka PDF %1$d z %2$d</string>
@@ -140,6 +142,12 @@
     <string name="theme_grove">Háj</string>
     <string name="theme_ember">Žár</string>
     <string name="theme_iris">Kosatec</string>
+    <string name="theme_lagoon">Laguna</string>
+    <string name="theme_rose">Růže</string>
+    <string name="theme_slate">Břidlice</string>
+    <string name="theme_custom">Vlastní</string>
+    <string name="theme_accent_hex">Barva motivu</string>
+    <string name="theme_accent_hex_hint">Šest hexadecimálních znaků, například #247668.</string>
     <string name="theme_light">Světlý</string>
     <string name="theme_dark">Tmavý</string>
     <string name="reader_tab_bookmark">Záložka</string>
@@ -185,6 +193,10 @@
     <string name="language_polish">Polski</string>
     <string name="keep_screen_awake">Nevypínat obrazovku</string>
     <string name="page_fit">Přizpůsobení stránky</string>
+    <string name="pdf_zoom">Přiblížení PDF</string>
+    <string name="pdf_zoom_status">Aktuálně %1$d %% · Uložené nastavení %2$d %%</string>
+    <string name="save_pdf_zoom">Uložit jako výchozí pro všechna PDF</string>
+    <string name="reset_pdf_zoom">Vrátit přiblížení na 100 %</string>
     <string name="fit_page">Stránka</string>
     <string name="fit_width">Šířka</string>
     <string name="page_turn_taps">Otáčení klepnutím</string>
@@ -196,7 +208,7 @@
     <string name="medium">Střední</string>
     <string name="large">Velké</string>
     <string name="app_version">Verze</string>
-    <string name="android_requirement">Vyžaduje Android 10 nebo novější</string>
+    <string name="android_requirement">Vyžaduje Android 9 nebo novější</string>
     <string name="privacy_offline">Offline. Bez účtu a sběru dat.</string>
     <string name="privacy_policy">Zásady ochrany soukromí</string>
     <string name="license">Licence</string>
@@ -207,6 +219,9 @@
     <string name="underline">Podtržení</string>
     <string name="strike_through">Přeškrtnutí</string>
     <string name="text_box">Textové pole</string>
+    <string name="insert_text">Vložit text</string>
+    <string name="plain_text_tool">Text</string>
+    <string name="plain_text_too_long">Tento text se na stránku nevejde.</string>
     <string name="line">Čára</string>
     <string name="arrow">Šipka</string>
     <string name="rectangle">Obdélník</string>

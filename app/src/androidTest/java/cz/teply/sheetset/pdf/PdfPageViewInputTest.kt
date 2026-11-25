@@ -229,6 +229,57 @@ class PdfPageViewInputTest {
     }
 
     @Test
+    fun widthFitSwipeTurnsInBothDirectionsDespiteFractionalOverflow() {
+        var nextCount = 0
+        var previousCount = 0
+        scenario.onActivity {
+            view.layout(0, 0, 641, 800)
+            view.pageFit = PageFit.WIDTH
+            view.pageTurnTaps = false
+            view.onNextPage = { nextCount++ }
+            view.onPreviousPage = { previousCount++ }
+        }
+
+        val right = Point(500f, 400f)
+        val left = Point(140f, 400f)
+        drag(right, left)
+        drag(left, right)
+
+        assertEquals(1, nextCount)
+        assertEquals(1, previousCount)
+
+        scenario.onActivity { view.pageTurnSwipes = false }
+        drag(right, left)
+
+        assertEquals(1, nextCount)
+    }
+
+    @Test
+    fun zoomedSwipePansFirstAndTurnsFromTheHorizontalBoundary() {
+        var nextCount = 0
+        scenario.onActivity {
+            view.layout(0, 0, 640, 800)
+            view.pageFit = PageFit.WIDTH
+            view.pageTurnTaps = false
+            view.onNextPage = { nextCount++ }
+            view.showPage(source, 0, zoom = 2f)
+        }
+
+        val right = Point(520f, 400f)
+        val left = Point(120f, 400f)
+        drag(right, left)
+        assertEquals(0, nextCount)
+        assertTrue(viewport().panX < 0f)
+        scenario.onActivity {
+            assertEquals(0.75f, requireNotNull(view.visiblePageCenter()).x, 0.001f)
+        }
+
+        drag(right, left)
+        assertEquals(1, nextCount)
+        assertEquals(2f, viewport().zoom, 0.0001f)
+    }
+
+    @Test
     fun viewStylusPointerUpDoesNotTurnPageFromRemainingFinger() {
         var nextCount = 0
         scenario.onActivity {
@@ -319,6 +370,26 @@ class PdfPageViewInputTest {
         } finally {
             tallSource.delete()
         }
+    }
+
+    @Test
+    fun rasterFitsTheViewAndGrowsWithoutResettingViewport() {
+        scenario.onActivity {
+            view.layout(0, 0, 300, 300)
+            view.showPage(source, 1)
+        }
+        awaitRenderQueue()
+        assertEquals(300, renderedBitmap().width)
+        assertEquals(300, renderedBitmap().height)
+        val before = viewport()
+
+        scenario.onActivity { view.layout(0, 0, 500, 500) }
+        awaitRenderQueue()
+
+        assertEquals(500, renderedBitmap().width)
+        assertEquals(500, renderedBitmap().height)
+        assertEquals(before, viewport())
+        assertEquals(PDF_COLOR.argb, pageCenterColor())
     }
 
     @Test
@@ -838,6 +909,153 @@ class PdfPageViewInputTest {
         assertEquals(0.5f, points.single().y, 0.001f)
     }
 
+    @Test
+    fun plainTextTapRequestsOneNormalizedPlacementPoint() {
+        val requests = mutableListOf<NormalizedPoint>()
+        scenario.onActivity {
+            view.tool = ReaderTool.TEXT_BOX
+            view.onRequestPlainText = requests::add
+        }
+
+        tap(pagePoint(0.98f, 0.98f))
+        val tapped = requests.single()
+        assertEquals(0.98f, tapped.x, 0.001f)
+        assertEquals(0.98f, tapped.y, 0.001f)
+    }
+
+    @Test
+    fun selectedPlainTextCanMoveScaleAndRotateByTouch() {
+        val updates = mutableListOf<PlainTextAnnotation>()
+        val text = PlainTextAnnotation(
+            id = "text",
+            bounds = NormalizedRect(0.35f, 0.43f, 0.65f, 0.57f),
+            text = "Repeat twice",
+            fontSize = 0.036f,
+        )
+        scenario.onActivity {
+            view.annotations = listOf(text)
+            view.selectedAnnotationIds = setOf(text.id)
+            view.tool = ReaderTool.SELECT
+            view.onUpdateAnnotations = { annotations ->
+                updates += annotations.single() as PlainTextAnnotation
+                view.annotations = annotations
+            }
+        }
+
+        val center = NormalizedPoint(0.58f, 0.55f)
+        drag(pagePoint(0.5f, 0.5f), pagePoint(center.x, center.y))
+        val moved = updates.single()
+        assertEquals(text.bounds.left + 0.08f, moved.bounds.left, 0.001f)
+        assertEquals(text.bounds.top + 0.05f, moved.bounds.top, 0.001f)
+
+        val before = viewport()
+        val downTime = SystemClock.uptimeMillis()
+        val first = pagePoint(0.53f, 0.55f)
+        val second = pagePoint(0.63f, 0.55f)
+        val firstEnd = pagePoint(0.6f, 0.475f)
+        val secondEnd = pagePoint(0.6f, 0.625f)
+        send(event(downTime, downTime, MotionEvent.ACTION_DOWN, Pointer(3, FINGER, first)))
+        send(event(
+            downTime, downTime + 10,
+            MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            Pointer(3, FINGER, first), Pointer(11, FINGER, second),
+        ))
+        send(event(
+            downTime, downTime + 20, MotionEvent.ACTION_MOVE,
+            Pointer(3, FINGER, pagePoint(0.59f, 0.49f)),
+            Pointer(11, FINGER, pagePoint(0.59f, 0.61f)),
+        ))
+        assertEquals("Transform previews must not persist intermediate moves", 1, updates.size)
+        assertEquals(before, viewport())
+
+        send(event(
+            downTime, downTime + 30, MotionEvent.ACTION_POINTER_UP,
+            Pointer(11, FINGER, secondEnd), Pointer(3, FINGER, firstEnd),
+        ))
+        assertEquals("Lifting one finger must not persist twice", 1, updates.size)
+        val tail = pagePoint(0.1f, 0.1f)
+        send(event(downTime, downTime + 40, MotionEvent.ACTION_MOVE, Pointer(3, FINGER, tail)))
+        send(event(downTime, downTime + 50, MotionEvent.ACTION_UP, Pointer(3, FINGER, tail)))
+
+        assertEquals(2, updates.size)
+        val transformed = updates.last()
+        assertEquals(moved.fontSize * 1.5f, transformed.fontSize, 0.0001f)
+        assertEquals(90f, transformed.rotationDegrees, 0.1f)
+        assertEquals(0.6f, (transformed.bounds.left + transformed.bounds.right) / 2f, 0.001f)
+        assertEquals(0.55f, (transformed.bounds.top + transformed.bounds.bottom) / 2f, 0.001f)
+        assertEquals(text.text, transformed.text)
+        assertEquals(before, viewport())
+
+        pinch(
+            pagePoint(0.6f, 0.52f), pagePoint(0.6f, 0.58f),
+            pagePoint(0.6f, 0.535f), pagePoint(0.6f, 0.565f),
+        )
+        assertEquals(3, updates.size)
+        assertEquals(transformed.fontSize / 2f, updates.last().fontSize, 0.0001f)
+        assertEquals(90f, updates.last().rotationDegrees, 0.1f)
+        assertEquals(before, viewport())
+    }
+
+    @Test
+    fun cancellingPlainTextPinchKeepsStoredTextAndAllowsAFreshDrag() {
+        val text = PlainTextAnnotation(
+            id = "text", bounds = NormalizedRect(0.35f, 0.43f, 0.65f, 0.57f),
+            text = "Repeat twice", fontSize = 0.036f,
+        )
+        val updates = mutableListOf<PlainTextAnnotation>()
+        scenario.onActivity {
+            view.tool = ReaderTool.SELECT
+            view.annotations = listOf(text)
+            view.selectedAnnotationIds = setOf(text.id)
+            view.onUpdateAnnotations = { annotations ->
+                updates += annotations.single() as PlainTextAnnotation
+                view.annotations = annotations
+            }
+        }
+        val before = viewport()
+
+        pinch(
+            pagePoint(0.45f, 0.5f), pagePoint(0.55f, 0.5f),
+            pagePoint(0.4f, 0.5f), pagePoint(0.6f, 0.5f),
+            cancel = true,
+        )
+
+        assertTrue(updates.isEmpty())
+        assertEquals(before, viewport())
+        scenario.onActivity { assertEquals(listOf(text), view.annotations) }
+
+        drag(pagePoint(0.5f, 0.5f), pagePoint(0.6f, 0.5f))
+        val moved = updates.single()
+        assertEquals(text.bounds.left + 0.1f, moved.bounds.left, 0.001f)
+        assertEquals(text.fontSize, moved.fontSize)
+        assertEquals(text.rotationDegrees, moved.rotationDegrees)
+    }
+
+    @Test
+    fun pinchStartingOutsideSelectedTextStillZoomsThePage() {
+        val text = PlainTextAnnotation(
+            id = "text", bounds = NormalizedRect(0.35f, 0.43f, 0.65f, 0.57f),
+            text = "Repeat twice", fontSize = 0.036f,
+        )
+        var updates = 0
+        scenario.onActivity {
+            view.tool = ReaderTool.SELECT
+            view.annotations = listOf(text)
+            view.selectedAnnotationIds = setOf(text.id)
+            view.onUpdateAnnotations = { updates++ }
+        }
+        val before = viewport()
+
+        pinch(
+            pagePoint(0.15f, 0.2f), pagePoint(0.25f, 0.2f),
+            pagePoint(0.05f, 0.2f), pagePoint(0.65f, 0.2f),
+        )
+
+        assertTrue("A pinch outside text must still zoom the page", viewport().zoom > before.zoom)
+        assertEquals(0, updates)
+        scenario.onActivity { assertEquals(listOf(text), view.annotations) }
+    }
+
     private fun awaitRenderQueue() {
         instrumentation.waitForIdleSync()
         lateinit var executor: ExecutorService
@@ -896,6 +1114,43 @@ class PdfPageViewInputTest {
     }
 
     private fun tap(point: Point) = drag(point, point)
+
+    private fun pinch(first: Point, second: Point, firstEnd: Point, secondEnd: Point, cancel: Boolean = false) {
+        val downTime = SystemClock.uptimeMillis()
+        send(event(downTime, downTime, MotionEvent.ACTION_DOWN, Pointer(3, FINGER, first)))
+        send(event(
+            downTime, downTime + 10,
+            MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+            Pointer(3, FINGER, first), Pointer(11, FINGER, second),
+        ))
+        for (step in 1..4) {
+            val fraction = step / 4f
+            send(event(
+                downTime, downTime + 10L + step * 20, MotionEvent.ACTION_MOVE,
+                Pointer(3, FINGER, Point(
+                    first.x + (firstEnd.x - first.x) * fraction,
+                    first.y + (firstEnd.y - first.y) * fraction,
+                )),
+                Pointer(11, FINGER, Point(
+                    second.x + (secondEnd.x - second.x) * fraction,
+                    second.y + (secondEnd.y - second.y) * fraction,
+                )),
+            ))
+        }
+        if (cancel) {
+            send(event(
+                downTime, downTime + 100, MotionEvent.ACTION_CANCEL,
+                Pointer(3, FINGER, firstEnd), Pointer(11, FINGER, secondEnd),
+            ))
+        } else {
+            send(event(
+                downTime, downTime + 100,
+                MotionEvent.ACTION_POINTER_UP or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT),
+                Pointer(3, FINGER, firstEnd), Pointer(11, FINGER, secondEnd),
+            ))
+            send(event(downTime, downTime + 110, MotionEvent.ACTION_UP, Pointer(3, FINGER, firstEnd)))
+        }
+    }
 
     private fun drag(start: Point, end: Point, finishAction: Int = MotionEvent.ACTION_UP) {
         val downTime = SystemClock.uptimeMillis()

@@ -97,6 +97,8 @@
     <string name="undo">Cofnij</string>
     <string name="redo">Ponów</string>
     <string name="done">Gotowe</string>
+    <string name="hide_editing_tools">Ukryj narzędzia</string>
+    <string name="show_editing_tools">Pokaż narzędzia</string>
     <string name="previous">Poprzednia</string>
     <string name="next">Następna</string>
     <string name="pdf_page">Strona PDF %1$d z %2$d</string>
@@ -140,6 +142,12 @@
     <string name="theme_grove">Gaj</string>
     <string name="theme_ember">Żar</string>
     <string name="theme_iris">Irys</string>
+    <string name="theme_lagoon">Laguna</string>
+    <string name="theme_rose">Róża</string>
+    <string name="theme_slate">Łupek</string>
+    <string name="theme_custom">Własny</string>
+    <string name="theme_accent_hex">Kolor akcentu</string>
+    <string name="theme_accent_hex_hint">Sześć znaków szesnastkowych, na przykład #247668.</string>
     <string name="theme_light">Jasny</string>
     <string name="theme_dark">Ciemny</string>
     <string name="reader_tab_bookmark">Zakładka</string>
@@ -185,6 +193,10 @@
     <string name="language_polish">Polski</string>
     <string name="keep_screen_awake">Nie wygaszaj ekranu</string>
     <string name="page_fit">Dopasowanie strony</string>
+    <string name="pdf_zoom">Powiększenie PDF</string>
+    <string name="pdf_zoom_status">Bieżące %1$d%% · Zapisane domyślne %2$d%%</string>
+    <string name="save_pdf_zoom">Zapisz jako domyślne dla wszystkich PDF</string>
+    <string name="reset_pdf_zoom">Przywróć powiększenie 100%</string>
     <string name="fit_page">Strona</string>
     <string name="fit_width">Szerokość</string>
     <string name="page_turn_taps">Zmiana strony dotknięciem</string>
@@ -196,7 +208,7 @@
     <string name="medium">Średnie</string>
     <string name="large">Duże</string>
     <string name="app_version">Wersja</string>
-    <string name="android_requirement">Wymaga Androida 10 lub nowszego</string>
+    <string name="android_requirement">Wymaga Androida 9 lub nowszego</string>
     <string name="privacy_offline">Offline. Bez konta i zbierania danych.</string>
     <string name="privacy_policy">Polityka prywatności</string>
     <string name="license">Licencja</string>
@@ -207,6 +219,9 @@
     <string name="underline">Podkreślenie</string>
     <string name="strike_through">Przekreślenie</string>
     <string name="text_box">Pole tekstowe</string>
+    <string name="insert_text">Wstaw tekst</string>
+    <string name="plain_text_tool">Tekst</string>
+    <string name="plain_text_too_long">Ten tekst nie mieści się na stronie.</string>
     <string name="line">Linia</string>
     <string name="arrow">Strzałka</string>
     <string name="rectangle">Prostokąt</string>

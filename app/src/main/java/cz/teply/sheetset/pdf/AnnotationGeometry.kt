@@ -50,6 +50,13 @@ fun PageAnnotation.hitTest(
 
         is MarkupAnnotation -> bounds.any { it.contains(point, radius) }
         is TextBoxAnnotation -> bounds.contains(point, radius)
+        is PlainTextAnnotation -> {
+            val center = bounds.center().onPage(pageWidth, pageHeight)
+            val local = (position - center).rotated(-rotationDegrees)
+            val outsideX = (abs(local.x) - bounds.width() * pageWidth / 2).coerceAtLeast(0.0)
+            val outsideY = (abs(local.y) - bounds.height() * pageHeight / 2).coerceAtLeast(0.0)
+            hypot(outsideX, outsideY) <= hitRadius
+        }
         is SymbolAnnotation -> normalizedBounds().contains(point, radius)
         is ShapeAnnotation -> when (kind) {
             ShapeKind.LINE, ShapeKind.ARROW -> {
@@ -79,8 +86,13 @@ fun PageAnnotation.hitTest(
     }
 }
 
-fun PageAnnotation.translated(dx: Float, dy: Float): PageAnnotation {
-    val bounds = normalizedBounds()
+fun PageAnnotation.translated(
+    dx: Float,
+    dy: Float,
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
+): PageAnnotation {
+    val bounds = movementBounds(pageWidth, pageHeight)
     val safeDx = dx.coerceIn(-bounds.left, 1f - bounds.right)
     val safeDy = dy.coerceIn(-bounds.top, 1f - bounds.bottom)
     if (safeDx == 0f && safeDy == 0f) return this
@@ -88,6 +100,7 @@ fun PageAnnotation.translated(dx: Float, dy: Float): PageAnnotation {
         is InkAnnotation -> copy(points = points.map { it.translated(safeDx, safeDy) })
         is MarkupAnnotation -> copy(bounds = this.bounds.map { it.translated(safeDx, safeDy) })
         is TextBoxAnnotation -> copy(bounds = this.bounds.translated(safeDx, safeDy))
+        is PlainTextAnnotation -> copy(bounds = this.bounds.translated(safeDx, safeDy))
         is SymbolAnnotation -> copy(center = center.translated(safeDx, safeDy))
         is ShapeAnnotation -> copy(
             start = start.translated(safeDx, safeDy),
@@ -102,11 +115,11 @@ fun List<PageAnnotation>.lassoSelection(
     pageHeight: Float = 1f,
 ): Set<String> {
     requirePageSize(pageWidth, pageHeight)
-    return filter {
-        if (it is InkAnnotation) {
-            it.intersectsLasso(bounds, pageWidth, pageHeight)
-        } else {
-            it.normalizedBounds().intersects(bounds)
+    return filter { annotation ->
+        when (annotation) {
+            is InkAnnotation -> annotation.intersectsLasso(bounds, pageWidth, pageHeight)
+            is PlainTextAnnotation -> annotation.rotatedBounds(pageWidth, pageHeight).intersects(bounds)
+            else -> annotation.normalizedBounds().intersects(bounds)
         }
     }.mapTo(mutableSetOf(), PageAnnotation::id)
 }
@@ -115,30 +128,34 @@ fun List<PageAnnotation>.translateSelection(
     ids: Set<String>,
     dx: Float,
     dy: Float,
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
 ): List<PageAnnotation> {
     val selected = filter { it.id in ids }
     if (selected.isEmpty()) return this
-    val bounds = selected.map(PageAnnotation::normalizedBounds).unionBounds()
+    val bounds = selected.map { it.movementBounds(pageWidth, pageHeight) }.unionBounds()
     val safeDx = dx.coerceIn(-bounds.left, 1f - bounds.right)
     val safeDy = dy.coerceIn(-bounds.top, 1f - bounds.bottom)
     return map { annotation ->
-        if (annotation.id in ids) annotation.translated(safeDx, safeDy) else annotation
+        if (annotation.id in ids) annotation.translated(safeDx, safeDy, pageWidth, pageHeight) else annotation
     }
 }
 
 fun List<PageAnnotation>.duplicateSelection(
     ids: Set<String>,
+    pageWidth: Float = 1f,
+    pageHeight: Float = 1f,
     idFactory: () -> String,
 ): List<PageAnnotation> {
     val selected = filter { it.id in ids }
     if (selected.isEmpty()) return this
-    val bounds = selected.map(PageAnnotation::normalizedBounds).unionBounds()
+    val bounds = selected.map { it.movementBounds(pageWidth, pageHeight) }.unionBounds()
     val offset = if (bounds.right <= 1f - DUPLICATE_OFFSET && bounds.bottom <= 1f - DUPLICATE_OFFSET) {
         DUPLICATE_OFFSET
     } else {
         0f
     }
-    return this + selected.map { it.withId(idFactory()).translated(offset, offset) }
+    return this + selected.map { it.withId(idFactory()).translated(offset, offset, pageWidth, pageHeight) }
 }
 
 fun PageAnnotation.resized(start: NormalizedPoint, end: NormalizedPoint): PageAnnotation {
@@ -151,6 +168,10 @@ fun PageAnnotation.resized(start: NormalizedPoint, end: NormalizedPoint): PageAn
             copy(bounds = bounds.map { it.scaled(source, target) })
         }
         is TextBoxAnnotation -> copy(bounds = target)
+        is PlainTextAnnotation -> scaledBy(
+            min(target.width().toDouble() / bounds.width(), target.height().toDouble() / bounds.height()),
+            target.center(),
+        )
         is SymbolAnnotation -> copy(
             center = NormalizedPoint(
                 (target.left + target.right) / 2f,
@@ -185,6 +206,7 @@ fun PageAnnotation.resizeHandles(
     }
     is MarkupAnnotation, is TextBoxAnnotation ->
         normalizedBounds().cornerHandles()
+    is PlainTextAnnotation -> textHandles(pageWidth, pageHeight)
     is SymbolAnnotation -> normalizedBounds().cornerHandles() +
         (AnnotationHandle.ROTATION to rotationHandle(pageWidth, pageHeight))
 }
@@ -196,6 +218,7 @@ fun PageAnnotation.resized(
     pageHeight: Float = 1f,
 ): PageAnnotation {
     if (this is InkAnnotation) return this
+    if (this is PlainTextAnnotation) return moveTextHandle(handle, point, pageWidth, pageHeight)
     if (this is SymbolAnnotation && handle == AnnotationHandle.ROTATION) {
         requirePageSize(pageWidth, pageHeight)
         val dx = (point.x.toDouble() - center.x) * pageWidth
@@ -259,14 +282,163 @@ private fun SymbolAnnotation.rotationHandle(pageWidth: Float, pageHeight: Float)
     // Exact cardinal directions avoid collapsing a handle tangent to the page edge.
     val dx = if (rotationDegrees % 180f == 0f) 0.0 else cos(angle) * radius / pageWidth
     val dy = if ((rotationDegrees - 90f) % 180f == 0f) 0.0 else sin(angle) * radius / pageHeight
+    return center.alongPageRay(dx, dy)
+}
+
+private fun NormalizedPoint.alongPageRay(dx: Double, dy: Double): NormalizedPoint {
     var scale = 1.0
-    if (dx != 0.0) scale = min(scale, (if (dx > 0.0) 1.0 - center.x else -center.x.toDouble()) / dx)
-    if (dy != 0.0) scale = min(scale, (if (dy > 0.0) 1.0 - center.y else -center.y.toDouble()) / dy)
+    if (dx != 0.0) scale = min(scale, (if (dx > 0.0) 1.0 - x else -x.toDouble()) / dx)
+    if (dy != 0.0) scale = min(scale, (if (dy > 0.0) 1.0 - y else -y.toDouble()) / dy)
     return NormalizedPoint(
-        x = (center.x + dx * scale).toFloat().coerceIn(0f, 1f),
-        y = (center.y + dy * scale).toFloat().coerceIn(0f, 1f),
+        x = (x + dx * scale).toFloat().coerceIn(0f, 1f),
+        y = (y + dy * scale).toFloat().coerceIn(0f, 1f),
     )
 }
+
+private fun PlainTextAnnotation.textHandles(pageWidth: Float, pageHeight: Float): Map<AnnotationHandle, NormalizedPoint> {
+    requirePageSize(pageWidth, pageHeight)
+    val center = bounds.center()
+    val padding = min(pageWidth, pageHeight) * 0.025
+    val halfWidth = bounds.width().toDouble() * pageWidth / 2
+    val halfHeight = bounds.height().toDouble() * pageHeight / 2
+    val scale = MetricPoint(halfWidth + padding, halfHeight + padding).rotated(rotationDegrees)
+    val rotation = MetricPoint(0.0, -halfHeight - padding).rotated(rotationDegrees)
+    return mapOf(
+        AnnotationHandle.BOTTOM_RIGHT to center.alongPageRay(scale.x / pageWidth, scale.y / pageHeight),
+        AnnotationHandle.ROTATION to center.alongPageRay(rotation.x / pageWidth, rotation.y / pageHeight),
+    )
+}
+
+private fun PlainTextAnnotation.moveTextHandle(
+    handle: AnnotationHandle,
+    point: NormalizedPoint,
+    pageWidth: Float,
+    pageHeight: Float,
+): PlainTextAnnotation {
+    val original = textHandles(pageWidth, pageHeight)[handle] ?: return this
+    if (point == original) return this
+    val center = bounds.center().onPage(pageWidth, pageHeight)
+    val target = point.onPage(pageWidth, pageHeight) - center
+    val transformed = when (handle) {
+        AnnotationHandle.ROTATION -> if (target.x == 0.0 && target.y == 0.0) this else copy(
+            rotationDegrees = normalizedAnnotationRotation(Math.toDegrees(atan2(target.y, target.x)).toFloat() + 90f),
+        )
+        AnnotationHandle.BOTTOM_RIGHT -> {
+            val ray = original.onPage(pageWidth, pageHeight) - center
+            val lengthSquared = ray.x * ray.x + ray.y * ray.y
+            if (lengthSquared == 0.0) this else scaledBy((target.x * ray.x + target.y * ray.y) / lengthSquared)
+        }
+        else -> this
+    }
+    return if (transformed == this) this else transformed.fittedAtPageEdges(pageWidth, pageHeight)
+}
+
+internal fun PlainTextAnnotation.transformed(
+    scale: Float,
+    rotationDelta: Float,
+    focusX: Float,
+    focusY: Float,
+    targetFocusX: Float,
+    targetFocusY: Float,
+    pageWidth: Float,
+    pageHeight: Float,
+): PlainTextAnnotation {
+    requirePageSize(pageWidth, pageHeight)
+    require(scale.isFinite() && scale > 0f && rotationDelta.isFinite()) { "Invalid text transform" }
+    require(focusX.isFinite() && focusY.isFinite() && targetFocusX.isFinite() && targetFocusY.isFinite()) {
+        "Text transform focus must be finite"
+    }
+    if (scale == 1f && normalizedAnnotationRotation(rotationDelta) == 0f &&
+        focusX == targetFocusX && focusY == targetFocusY
+    ) return this
+    val rotated = copy(rotationDegrees = normalizedAnnotationRotation(rotationDegrees + rotationDelta))
+    val (halfWidth, halfHeight) = rotated.rotatedHalfSize(pageWidth, pageHeight)
+    val minimumScale = MIN_PLAIN_TEXT_SIZE.toDouble() / fontSize
+    val maximumScale = minOf(
+        MAX_PLAIN_TEXT_SIZE.toDouble() / fontSize,
+        1.0 / bounds.width(),
+        1.0 / bounds.height(),
+        0.5 / halfWidth,
+        0.5 / halfHeight,
+    )
+    if (maximumScale < minimumScale) return this
+    val resized = rotated.scaledBy(scale.toDouble().coerceIn(minimumScale, maximumScale))
+    val actualScale = resized.fontSize.toDouble() / fontSize
+    val center = bounds.center().onPage(pageWidth, pageHeight)
+    val moved = (center - MetricPoint(focusX.toDouble(), focusY.toDouble())).rotated(rotationDelta) * actualScale +
+        MetricPoint(targetFocusX.toDouble(), targetFocusY.toDouble())
+    return resized.scaledBy(
+        1.0,
+        NormalizedPoint(
+            (moved.x / pageWidth).coerceIn(0.0, 1.0).toFloat(),
+            (moved.y / pageHeight).coerceIn(0.0, 1.0).toFloat(),
+        ),
+    ).fittedAtPageEdges(pageWidth, pageHeight)
+}
+
+private fun PlainTextAnnotation.scaledBy(requested: Double, center: NormalizedPoint = bounds.center()): PlainTextAnnotation {
+    val scale = requested.coerceIn(
+        MIN_PLAIN_TEXT_SIZE.toDouble() / fontSize,
+        minOf(MAX_PLAIN_TEXT_SIZE.toDouble() / fontSize, 1.0 / bounds.width(), 1.0 / bounds.height()),
+    )
+    if (scale == 1.0 && center == bounds.center()) return this
+    val width = (bounds.width() * scale).toFloat().coerceAtMost(1f)
+    val height = (bounds.height() * scale).toFloat().coerceAtMost(1f)
+    val left = (center.x - width / 2).coerceIn(0f, 1f - width)
+    val top = (center.y - height / 2).coerceIn(0f, 1f - height)
+    val right = (left + width).coerceAtMost(1f)
+    val bottom = (top + height).coerceAtMost(1f)
+    if (left >= right || top >= bottom) return this
+    return copy(
+        bounds = NormalizedRect(left, top, right, bottom),
+        fontSize = (fontSize * scale).toFloat().coerceIn(MIN_PLAIN_TEXT_SIZE, MAX_PLAIN_TEXT_SIZE),
+    )
+}
+
+private fun PageAnnotation.movementBounds(pageWidth: Float, pageHeight: Float): NormalizedRect {
+    if (this !is PlainTextAnnotation || rotationDegrees % 360f == 0f) return normalizedBounds()
+    requirePageSize(pageWidth, pageHeight)
+    return listOf(bounds, rotatedBounds(pageWidth, pageHeight)).unionBounds()
+}
+
+private fun PlainTextAnnotation.rotatedBounds(pageWidth: Float, pageHeight: Float): NormalizedRect {
+    val center = bounds.center()
+    val (x, y) = rotatedHalfSize(pageWidth, pageHeight)
+    val left = (center.x - x).toFloat().coerceAtLeast(0f)
+    val top = (center.y - y).toFloat().coerceAtLeast(0f)
+    val right = (center.x + x).toFloat().coerceAtMost(1f)
+    val bottom = (center.y + y).toFloat().coerceAtMost(1f)
+    return if (left < right && top < bottom) NormalizedRect(left, top, right, bottom) else bounds
+}
+
+internal fun PlainTextAnnotation.fittedAtPageEdges(pageWidth: Float, pageHeight: Float): PlainTextAnnotation {
+    if (rotationDegrees % 360f == 0f) return this
+    val center = bounds.center()
+    val (halfWidth, halfHeight) = rotatedHalfSize(pageWidth, pageHeight)
+    val marginX = max(halfWidth, bounds.width().toDouble() / 2).toFloat().coerceAtMost(0.5f)
+    val marginY = max(halfHeight, bounds.height().toDouble() / 2).toFloat().coerceAtMost(0.5f)
+    val dx = center.x.coerceIn(marginX, 1f - marginX) - center.x
+    val dy = center.y.coerceIn(marginY, 1f - marginY) - center.y
+    return if (dx == 0f && dy == 0f) this else copy(bounds = bounds.translated(dx, dy))
+}
+
+internal fun PlainTextAnnotation.fitsPage(pageWidth: Float, pageHeight: Float): Boolean {
+    val (halfWidth, halfHeight) = rotatedHalfSize(pageWidth, pageHeight)
+    return halfWidth <= 0.5 && halfHeight <= 0.5
+}
+
+private fun PlainTextAnnotation.rotatedHalfSize(pageWidth: Float, pageHeight: Float): MetricPoint {
+    val halfWidth = bounds.width().toDouble() * pageWidth / 2
+    val halfHeight = bounds.height().toDouble() * pageHeight / 2
+    val first = MetricPoint(halfWidth, halfHeight).rotated(rotationDegrees)
+    val second = MetricPoint(-halfWidth, halfHeight).rotated(rotationDegrees)
+    return MetricPoint(
+        max(abs(first.x), abs(second.x)) / pageWidth,
+        max(abs(first.y), abs(second.y)) / pageHeight,
+    )
+}
+
+private fun NormalizedRect.center(): NormalizedPoint = NormalizedPoint(left + width() / 2, top + height() / 2)
 
 fun PageAnnotation.normalizedBounds(): NormalizedRect = when (this) {
     is InkAnnotation -> points.bounds()
@@ -277,6 +449,7 @@ fun PageAnnotation.normalizedBounds(): NormalizedRect = when (this) {
         bottom = bounds.maxOf(NormalizedRect::bottom),
     )
     is TextBoxAnnotation -> bounds
+    is PlainTextAnnotation -> bounds
     is SymbolAnnotation -> minimumRect(
         NormalizedPoint(
             (center.x - size / 2f).coerceIn(0f, 1f),
@@ -316,6 +489,7 @@ private fun PageAnnotation.withId(id: String): PageAnnotation = when (this) {
     is InkAnnotation -> copy(id = id)
     is MarkupAnnotation -> copy(id = id)
     is TextBoxAnnotation -> copy(id = id)
+    is PlainTextAnnotation -> copy(id = id)
     is SymbolAnnotation -> copy(id = id)
     is ShapeAnnotation -> copy(id = id)
 }
@@ -455,6 +629,13 @@ private data class MetricPoint(val x: Double, val y: Double) {
     operator fun plus(other: MetricPoint) = MetricPoint(x + other.x, y + other.y)
     operator fun minus(other: MetricPoint) = MetricPoint(x - other.x, y - other.y)
     operator fun times(scale: Double) = MetricPoint(x * scale, y * scale)
+
+    fun rotated(degrees: Float): MetricPoint {
+        val angle = Math.toRadians(degrees.toDouble())
+        val cosine = cos(angle)
+        val sine = sin(angle)
+        return MetricPoint(x * cosine - y * sine, x * sine + y * cosine)
+    }
 }
 
 private fun NormalizedPoint.onPage(width: Float, height: Float) =

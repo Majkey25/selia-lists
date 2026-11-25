@@ -97,6 +97,8 @@
     <string name="undo">Rückgängig</string>
     <string name="redo">Wiederholen</string>
     <string name="done">Fertig</string>
+    <string name="hide_editing_tools">Werkzeuge ausblenden</string>
+    <string name="show_editing_tools">Werkzeuge einblenden</string>
     <string name="previous">Zurück</string>
     <string name="next">Weiter</string>
     <string name="pdf_page">PDF-Seite %1$d von %2$d</string>
@@ -136,6 +138,12 @@
     <string name="theme_grove">Hain</string>
     <string name="theme_ember">Glut</string>
     <string name="theme_iris">Iris</string>
+    <string name="theme_lagoon">Lagune</string>
+    <string name="theme_rose">Rose</string>
+    <string name="theme_slate">Schiefer</string>
+    <string name="theme_custom">Benutzerdefiniert</string>
+    <string name="theme_accent_hex">Akzentfarbe</string>
+    <string name="theme_accent_hex_hint">Sechs Hexadezimalzeichen, zum Beispiel #247668.</string>
     <string name="theme_light">Hell</string>
     <string name="theme_dark">Dunkel</string>
     <string name="reader_tab_bookmark">Lesezeichen</string>
@@ -181,6 +189,10 @@
     <string name="language_polish">Polski</string>
     <string name="keep_screen_awake">Bildschirm aktiv lassen</string>
     <string name="page_fit">Seitenanpassung</string>
+    <string name="pdf_zoom">PDF-Zoom</string>
+    <string name="pdf_zoom_status">Aktuell %1$d %% · Gespeicherter Standard %2$d %%</string>
+    <string name="save_pdf_zoom">Als Standard für alle PDFs speichern</string>
+    <string name="reset_pdf_zoom">Zoom auf 100 % zurücksetzen</string>
     <string name="fit_page">Seite</string>
     <string name="fit_width">Breite</string>
     <string name="page_turn_taps">Tippen zum Blättern</string>
@@ -192,7 +204,7 @@
     <string name="medium">Mittel</string>
     <string name="large">Groß</string>
     <string name="app_version">Version</string>
-    <string name="android_requirement">Erfordert Android 10 oder neuer</string>
+    <string name="android_requirement">Erfordert Android 9 oder neuer</string>
     <string name="privacy_offline">Offline. Kein Konto und keine Datenerfassung.</string>
     <string name="privacy_policy">Datenschutzerklärung</string>
     <string name="license">Lizenz</string>
@@ -203,6 +215,9 @@
     <string name="underline">Unterstreichen</string>
     <string name="strike_through">Durchstreichen</string>
     <string name="text_box">Textfeld</string>
+    <string name="insert_text">Text einfügen</string>
+    <string name="plain_text_tool">Text</string>
+    <string name="plain_text_too_long">Dieser Text passt nicht auf die Seite.</string>
     <string name="line">Linie</string>
     <string name="arrow">Pfeil</string>
     <string name="rectangle">Rechteck</string>

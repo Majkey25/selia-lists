@@ -41,7 +41,6 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cz.teply.sheetset.LibraryUiState
 import cz.teply.sheetset.R
+import cz.teply.sheetset.data.BACKUP_FILE_BASENAME
 import cz.teply.sheetset.data.MAX_TITLE_LENGTH
 import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.pdf.DocumentAnnotations
@@ -158,14 +158,13 @@ private fun SheetSetContent(
         when {
             drawerState.isOpen -> scope.launch { drawerState.close() }
             state.reader != null -> actions.closeReader()
+            librarySearching -> librarySearching = false
             activeSetlistId != null -> activeSetlistId = null
         }
     }
 
     state.reader?.let { reader ->
-        key(reader.score.id) {
-            ReaderScreen(reader, state.settings, windowLayout, actions)
-        }
+        ReaderScreen(reader, state.settings, windowLayout, actions)
         return
     }
 
@@ -190,7 +189,7 @@ private fun SheetSetContent(
         },
         onSettings = actions.updateSettings,
         onLanguage = actions.selectLanguage,
-        onBackup = { backupLauncher.launch("SheetSet-Backup.zip") },
+        onBackup = { backupLauncher.launch("$BACKUP_FILE_BASENAME.zip") },
         onShareBackup = actions.shareBackup,
         onRestore = {
             restoreLauncher.launch(
@@ -282,6 +281,8 @@ private fun SheetSetContent(
                             onBack = { activeSetlistId = null },
                             modifier = Modifier.weight(1f),
                             embedded = true,
+                            handleEditingBack = drawerState.currentValue == DrawerValue.Closed &&
+                                drawerState.targetValue == DrawerValue.Closed,
                         )
                     } else {
                         Box(Modifier.weight(1f).fillMaxHeight())

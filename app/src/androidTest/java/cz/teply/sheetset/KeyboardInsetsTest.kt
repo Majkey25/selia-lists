@@ -1,11 +1,14 @@
 package cz.teply.sheetset
 
 import android.graphics.Bitmap
+import android.graphics.RectF
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.View
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -29,12 +32,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import cz.teply.sheetset.data.LibraryCatalog
 import cz.teply.sheetset.data.Score
 import cz.teply.sheetset.pdf.AnnotationColor
+import cz.teply.sheetset.pdf.NormalizedPoint
 import cz.teply.sheetset.pdf.NormalizedRect
 import cz.teply.sheetset.pdf.TextBoxAnnotation
 import cz.teply.sheetset.settings.AnnotationTextSize
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.ui.COLOR_PANEL_SCROLL_TAG
 import cz.teply.sheetset.ui.ColorPanel
+import cz.teply.sheetset.ui.InlinePdfTextEditor
 import cz.teply.sheetset.ui.SheetSetActions
 import cz.teply.sheetset.ui.SheetSetApp
 import cz.teply.sheetset.ui.SheetSetTheme
@@ -86,6 +91,29 @@ class KeyboardInsetsTest {
     }
 
     @Test
+    fun inlineTextAtBottomKeepsInputAndDoneAboveRealKeyboard() {
+        setContent {
+            BoxWithConstraints {
+                val density = LocalDensity.current
+                InlinePdfTextEditor(
+                    page = RectF(0f, 0f, with(density) { maxWidth.toPx() }, with(density) { maxHeight.toPx() }),
+                    anchor = NormalizedPoint(0.9f, 0.95f),
+                    text = "Repeat twice",
+                    fontSize = 0.036f,
+                    color = Color.Black,
+                    onText = {},
+                    onCommit = { true },
+                )
+            }
+        }
+
+        val field = composeRule.onNode(hasSetTextAction())
+        showKeyboard(field)
+        assertAboveKeyboard(field)
+        assertAboveKeyboard(composeRule.onNodeWithContentDescription(text(R.string.done)))
+    }
+
+    @Test
     fun textDialogKeepsOptionsAndActionsReachableWithRealKeyboard() {
         val draft = List(10) { "Draft line $it" }.joinToString("\n")
         var saved: TextBoxAnnotation? = null
@@ -120,7 +148,7 @@ class KeyboardInsetsTest {
     }
 
     @Test
-    fun customColorApplyRemainsReachableWithRealKeyboard() {
+    fun closingCustomColorAppliesItWithRealKeyboard() {
         val selected = AnnotationColor(0xFF12ABEF.toInt())
         var applied: AnnotationColor? = null
         setContent {
@@ -129,9 +157,8 @@ class KeyboardInsetsTest {
                 opacity = 255,
                 quickColors = AppSettings().editor.quickColors,
                 recentColors = emptyList(),
-                onDismiss = {},
                 onEyedropper = null,
-                onConfirm = { color, _ -> applied = color },
+                onClose = { color, _ -> applied = color },
             )
         }
         val scroll = composeRule.onNodeWithTag(COLOR_PANEL_SCROLL_TAG)
@@ -139,11 +166,9 @@ class KeyboardInsetsTest {
         composeRule.onNode(hasText(text(R.string.custom_color)) and hasClickAction()).performTouchInput { click() }
         scroll.performScrollToNode(hasSetTextAction())
         showKeyboard(composeRule.onNode(hasSetTextAction()))
-        scroll.performScrollToNode(hasText(text(R.string.apply)))
-
-        val apply = composeRule.onNodeWithText(text(R.string.apply))
-        assertAboveKeyboard(apply)
-        apply.performTouchInput { click() }
+        val close = composeRule.onNodeWithContentDescription(text(R.string.close))
+        assertAboveKeyboard(close)
+        close.performTouchInput { click() }
         composeRule.runOnIdle { assertEquals(selected, applied) }
     }
 

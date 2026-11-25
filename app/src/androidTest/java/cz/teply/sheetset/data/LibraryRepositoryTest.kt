@@ -99,6 +99,22 @@ class LibraryRepositoryTest {
     }
 
     @Test
+    fun corruptCatalogDoesNotStrandAnImportedPdf() {
+        val source = createPdf("valid.pdf", pages = 1)
+        val catalog = File(root, "catalog.json").apply { writeText("{") }
+        val repository = LibraryRepository(root)
+
+        assertThrows(PdfImportException::class.java) {
+            runBlocking {
+                repository.importPdf(PdfImport("Valid.pdf", "application/pdf", source.length(), source::inputStream))
+            }
+        }
+
+        assertTrue(File(root, "scores").listFiles().orEmpty().isEmpty())
+        assertEquals("{", catalog.readText())
+    }
+
+    @Test
     fun annotationsPersist() = runBlocking {
         val annotations = DocumentAnnotations(
             mapOf(
@@ -673,9 +689,10 @@ class LibraryRepositoryTest {
         repository.renameBookmark(score.id, "bookmark-1", "Finale")
         repository.updateScoreLabels(score.id, listOf("Band"))
         repository.updateSetlistLabels(setlist.id, listOf("Saturday"))
-        repository.saveReaderPosition(score.id, page = 2, part = 1, viewedAt = 99L)
+        val savedCatalog = repository.saveReaderPosition(score.id, page = 2, part = 1, viewedAt = 99L)
 
         val catalog = LibraryRepository(root).load()
+        assertEquals(catalog, savedCatalog)
         assertEquals(Bookmark("bookmark-1", "Finale", 2), catalog.scores.single().bookmarks.single())
         assertEquals(listOf("Band"), catalog.scores.single().labels)
         assertEquals(listOf("Saturday"), catalog.setlists.single().labels)

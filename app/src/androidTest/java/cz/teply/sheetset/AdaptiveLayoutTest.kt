@@ -21,6 +21,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.test.espresso.Espresso
 import cz.teply.sheetset.data.LibraryCatalog
 import cz.teply.sheetset.data.MAX_TITLE_LENGTH
 import cz.teply.sheetset.data.Score
@@ -69,6 +70,16 @@ class AdaptiveLayoutTest {
 
         composeRule.onAllNodesWithText("Show").assertCountEquals(2)
         composeRule.onNodeWithText("Add PDFs").assertIsDisplayed()
+
+        composeRule.onNodeWithText("Edit order").performClick()
+        composeRule.onNodeWithContentDescription("Menu").performClick()
+        composeRule.onNodeWithText("Menu").assertIsDisplayed()
+        Espresso.pressBack()
+        composeRule.onAllNodesWithText("Menu").assertCountEquals(0)
+        composeRule.onNodeWithText("Done").assertIsDisplayed()
+        Espresso.pressBack()
+        composeRule.onAllNodesWithText("Show").assertCountEquals(2)
+        composeRule.onNodeWithText("Edit order").assertIsDisplayed()
     }
 
     @Test

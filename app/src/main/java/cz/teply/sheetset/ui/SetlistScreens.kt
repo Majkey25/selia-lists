@@ -1,6 +1,8 @@
 package cz.teply.sheetset.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
@@ -358,6 +360,7 @@ fun SetlistDetail(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     embedded: Boolean = false,
+    handleEditingBack: Boolean = true,
 ) {
     var addDialog by rememberSaveable(setlist.id) { mutableStateOf(false) }
     var editing by rememberSaveable(setlist.id) { mutableStateOf(false) }
@@ -455,6 +458,14 @@ fun SetlistDetail(
         draggedKey = null
     }
 
+    fun exitEditing() {
+        if (dragOrigin >= 0) finishDrag(commit = false)
+        editing = false
+    }
+
+    val navigateBack = if (editing) ::exitEditing else onBack
+    BackHandler(enabled = editing && handleEditingBack && !addDialog, onBack = ::exitEditing)
+
     fun dragBy(amount: Float) {
         val currentIndex = dragOrigin.takeIf { it >= 0 } ?: return
         dragOffset += amount
@@ -480,18 +491,24 @@ fun SetlistDetail(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Button(
-                    enabled = interactionEnabled,
+                    enabled = editing || interactionEnabled,
                     shape = MaterialTheme.shapes.small,
-                    onClick = { addDialog = true },
+                    onClick = { if (editing) exitEditing() else addDialog = true },
                 ) {
-                    Text(stringResource(R.string.add_pdfs))
+                    if (editing) {
+                        Icon(painterResource(R.drawable.ic_done_24), contentDescription = null)
+                    }
+                    Text(
+                        stringResource(if (editing) R.string.done else R.string.add_pdfs),
+                        modifier = if (editing) Modifier.padding(start = 8.dp) else Modifier,
+                    )
                 }
-                if (setlist.scoreIds.isNotEmpty()) {
+                if (editing || setlist.scoreIds.isNotEmpty()) {
                     TextButton(
                         enabled = interactionEnabled,
-                        onClick = { editing = !editing },
+                        onClick = { if (editing) addDialog = true else editing = true },
                     ) {
-                        Text(stringResource(if (editing) R.string.done else R.string.edit_order))
+                        Text(stringResource(if (editing) R.string.add_pdfs else R.string.edit_order))
                     }
                 }
             }
@@ -551,14 +568,14 @@ fun SetlistDetail(
     }
     if (embedded) {
         Column(modifier.fillMaxSize()) {
-            SetlistHeader(setlist.name, onBack, statusBarPadding = false)
+            SetlistHeader(setlist.name, navigateBack, statusBarPadding = false)
             HorizontalDivider()
             detail(Modifier.weight(1f))
         }
     } else {
         Scaffold(
             modifier = modifier,
-            topBar = { SetlistHeader(setlist.name, onBack) },
+            topBar = { SetlistHeader(setlist.name, navigateBack) },
         ) { padding ->
             detail(Modifier.padding(padding))
         }
@@ -633,16 +650,23 @@ private fun SetlistScoreRow(
     val currentOnDragEnd by rememberUpdatedState(onDragEnd)
     val currentOnDragCancel by rememberUpdatedState(onDragCancel)
     val dragScale by animateFloatAsState(setlistDragScale(dragging), label = "setlist-drag-scale")
+    val rowShape = MaterialTheme.shapes.small
     Row(
         Modifier.fillMaxWidth().height(SetlistRowHeight)
-            .zIndex(if (dragging) 1f else 0f).graphicsLayer {
-            translationY = if (dragging) dragOffset else 0f
-            shadowElevation = if (dragging) 8.dp.toPx() else 0f
-            scaleX = dragScale
-            scaleY = dragScale
-        }.clickable(enabled = !editing && enabled) {
-            actions.openSetlistScore(setlist.id, index)
-        }.padding(vertical = 10.dp),
+            .zIndex(if (dragging) 1f else 0f)
+            .graphicsLayer {
+                translationY = if (dragging) dragOffset else 0f
+                shape = rowShape
+                shadowElevation = if (dragging) 8.dp.toPx() else 0f
+                scaleX = dragScale
+                scaleY = dragScale
+            }
+            .then(
+                if (dragging) Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh, rowShape)
+                else Modifier,
+            )
+            .clickable(enabled = !editing && enabled) { actions.openSetlistScore(setlist.id, index) }
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

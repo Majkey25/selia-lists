@@ -14,6 +14,8 @@ import cz.teply.sheetset.pdf.MAX_TEXT_LENGTH
 import cz.teply.sheetset.pdf.SymbolAnnotation
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.AnnotationTextSize
+import cz.teply.sheetset.settings.DEFAULT_CUSTOM_ACCENT_RGB
+import cz.teply.sheetset.settings.DEFAULT_PDF_ZOOM_PERCENT
 import cz.teply.sheetset.settings.PageFit
 import cz.teply.sheetset.settings.ReaderLayout
 import cz.teply.sheetset.settings.ThemeMode
@@ -151,10 +153,12 @@ class LibraryBackupTest {
             )
             val settings = AppSettings(
                 pageFit = PageFit.WIDTH,
+                defaultZoomPercent = 165,
                 pageTurnTaps = false,
                 readerLayout = ReaderLayout.HALF,
                 themeMode = ThemeMode.SYSTEM,
-                themePalette = ThemePalette.EMBER,
+                themePalette = ThemePalette.CUSTOM,
+                customAccentRgb = 0x225588,
                 editor = expectedEditor,
             )
             val archive = ByteArrayOutputStream()
@@ -164,6 +168,7 @@ class LibraryBackupTest {
                 val exportedSettings = JSONObject(zip.readBytes().toString(Charsets.UTF_8)).getJSONObject("settings")
                 assertEquals("LIGHT", exportedSettings.getString("themeMode"))
                 assertTrue(exportedSettings.getBoolean("followSystemTheme"))
+                assertEquals(0x225588, exportedSettings.getInt("customAccentRgb"))
             }
 
             val restored = LibraryRepository(restoreRoot)
@@ -256,29 +261,33 @@ class LibraryBackupTest {
         val original = repository.load()
         val validArchive = ByteArrayOutputStream()
         LibraryRepository(sourceRoot).createBackup(validArchive, AppSettings(), null)
-        val archive = ByteArrayOutputStream().also { output ->
-            ZipInputStream(ByteArrayInputStream(validArchive.toByteArray())).use { input ->
-                ZipOutputStream(output).use { zip ->
-                    while (true) {
-                        val entry = input.nextEntry ?: break
-                        zip.putNextEntry(ZipEntry(entry.name))
-                        if (entry.name == "manifest.json") {
-                            val manifest = JSONObject(input.readBytes().toString(Charsets.UTF_8)).put("version", 2.5)
-                            zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
-                        } else {
-                            input.copyTo(zip)
-                        }
-                        zip.closeEntry()
-                    }
-                }
-            }
-        }
+        val archive = rewriteBackupManifest(validArchive.toByteArray()) { it.put("version", 2.5) }
 
         assertThrows(BackupException::class.java) {
-            runBlocking { repository.restoreBackup(ByteArrayInputStream(archive.toByteArray())) }
+            runBlocking { repository.restoreBackup(ByteArrayInputStream(archive)) }
         }
 
         assertEquals(original, LibraryRepository(restoreRoot).load())
+    }
+
+    @Test
+    fun invalidDefaultZoomCannotReplaceExistingLibrary() = runBlocking {
+        val repository = LibraryRepository(restoreRoot)
+        repository.createSetlist("Keep")
+        val original = repository.load()
+        val validArchive = ByteArrayOutputStream()
+        LibraryRepository(sourceRoot).createBackup(validArchive, AppSettings(), null)
+
+        for (value in listOf(99, 501, 150.5, "150", JSONObject.NULL)) {
+            val archive = rewriteBackupManifest(validArchive.toByteArray()) {
+                it.getJSONObject("settings").put("defaultZoomPercent", value)
+            }
+
+            assertThrows(BackupException::class.java) {
+                runBlocking { repository.restoreBackup(ByteArrayInputStream(archive)) }
+            }
+            assertEquals(original, LibraryRepository(restoreRoot).load())
+        }
     }
 
     @Test
@@ -448,7 +457,7 @@ class LibraryBackupTest {
     }
 
     @Test
-    fun versionOneBackupUsesNewReaderDefaults() {
+    fun olderBackupsUseReaderDefaultsForMissingSettings() {
         runBlocking {
             val source = LibraryRepository(sourceRoot)
             val pdf = createPdf(pages = 1)
@@ -456,24 +465,47 @@ class LibraryBackupTest {
             val archive = ByteArrayOutputStream()
             source.createBackup(
                 archive,
-                AppSettings(readerLayout = ReaderLayout.HALF),
+                AppSettings(readerLayout = ReaderLayout.HALF, defaultZoomPercent = 165),
                 null,
             )
 
-            val restored = LibraryRepository(restoreRoot).restoreBackup(
-                ByteArrayInputStream(asVersionOne(archive.toByteArray())),
-            )
+            val repository = LibraryRepository(restoreRoot)
+            val versionTwoWithoutZoom = rewriteBackupManifest(archive.toByteArray()) {
+                it.getJSONObject("settings").remove("defaultZoomPercent")
+            }
+            val versionTwoSettings = requireNotNull(
+                repository.restoreBackup(ByteArrayInputStream(versionTwoWithoutZoom)),
+            ).settings
+            assertEquals(DEFAULT_PDF_ZOOM_PERCENT, versionTwoSettings.defaultZoomPercent)
+            assertEquals(ReaderLayout.HALF, versionTwoSettings.readerLayout)
+
+            val versionOne = rewriteBackupManifest(versionTwoWithoutZoom) { manifest ->
+                manifest.put("version", 1)
+                val settings = manifest.getJSONObject("settings")
+                settings.remove("readerLayout")
+                settings.remove("editor")
+                settings.remove("themeMode")
+                settings.remove("followSystemTheme")
+                settings.remove("themePalette")
+                settings.remove("customAccentRgb")
+            }
+            val restored = repository.restoreBackup(ByteArrayInputStream(versionOne))
 
             val settings = requireNotNull(restored).settings
             assertEquals(ReaderLayout.SINGLE, settings.readerLayout)
+            assertEquals(DEFAULT_PDF_ZOOM_PERCENT, settings.defaultZoomPercent)
             assertEquals(ThemeMode.LIGHT, settings.themeMode)
             assertEquals(ThemePalette.MONOCHROME, settings.themePalette)
+            assertEquals(DEFAULT_CUSTOM_ACCENT_RGB, settings.customAccentRgb)
             assertEquals(AnnotationEditorSettings.defaults(), settings.editor)
             pdf.delete()
         }
     }
 
-    private fun asVersionOne(archive: ByteArray): ByteArray = ByteArrayOutputStream().also { output ->
+    private fun rewriteBackupManifest(
+        archive: ByteArray,
+        editManifest: (JSONObject) -> Unit,
+    ): ByteArray = ByteArrayOutputStream().also { output ->
         ZipInputStream(ByteArrayInputStream(archive)).use { input ->
             ZipOutputStream(output).use { zip ->
                 while (true) {
@@ -481,15 +513,7 @@ class LibraryBackupTest {
                     zip.putNextEntry(ZipEntry(entry.name))
                     if (entry.name == "manifest.json") {
                         val manifest = JSONObject(input.readBytes().toString(Charsets.UTF_8))
-                        manifest.put("version", 1)
-                        manifest.getJSONObject("settings")
-                            .remove("readerLayout")
-                        manifest.getJSONObject("settings")
-                            .remove("editor")
-                        manifest.getJSONObject("settings")
-                            .remove("themeMode")
-                        manifest.getJSONObject("settings").remove("followSystemTheme")
-                        manifest.getJSONObject("settings").remove("themePalette")
+                        editManifest(manifest)
                         zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
                     } else {
                         input.copyTo(zip)

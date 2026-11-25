@@ -27,7 +27,9 @@ class SettingsStoreTest {
             .putString("pen_width", "MISSING")
             .putString("reader_layout", "UNKNOWN")
             .putString("theme_palette", "UNKNOWN")
+            .putString("custom_accent_rgb", "BROKEN")
             .putBoolean("keep_screen_awake", false)
+            .putInt("default_zoom_percent", 501)
             .commit()
 
         assertEquals(
@@ -40,6 +42,7 @@ class SettingsStoreTest {
     fun settingsRoundTrip() {
         val expected = AppSettings(
             pageFit = PageFit.WIDTH,
+            defaultZoomPercent = 160,
             pageTurnTaps = false,
             pageTurnSwipes = false,
             autoHideControls = false,
@@ -47,7 +50,8 @@ class SettingsStoreTest {
             textSize = AnnotationTextSize.LARGE,
             readerLayout = ReaderLayout.HALF,
             themeMode = ThemeMode.SYSTEM,
-            themePalette = ThemePalette.IRIS,
+            themePalette = ThemePalette.CUSTOM,
+            customAccentRgb = 0x225588,
         )
 
         val store = SettingsStore(preferences)
@@ -56,6 +60,10 @@ class SettingsStoreTest {
         assertEquals(expected, store.load())
         assertFalse(preferences.contains("pen_width"))
         assertFalse(preferences.contains("highlighter_strength"))
+
+        store.save(expected.copy(defaultZoomPercent = DEFAULT_PDF_ZOOM_PERCENT))
+
+        assertEquals(DEFAULT_PDF_ZOOM_PERCENT, store.load().defaultZoomPercent)
     }
 
     @Test
@@ -65,6 +73,7 @@ class SettingsStoreTest {
         val settings = SettingsStore(preferences).load()
         assertEquals(ThemeMode.DARK, settings.themeMode)
         assertEquals(ThemePalette.MONOCHROME, settings.themePalette)
+        assertEquals(DEFAULT_CUSTOM_ACCENT_RGB, settings.customAccentRgb)
     }
 
     @Test

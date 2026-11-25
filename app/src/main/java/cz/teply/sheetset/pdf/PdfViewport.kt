@@ -1,5 +1,8 @@
 package cz.teply.sheetset.pdf
 
+import cz.teply.sheetset.settings.DEFAULT_PDF_ZOOM_PERCENT
+import cz.teply.sheetset.settings.MAX_PDF_ZOOM_PERCENT
+
 data class PdfViewport(val zoom: Float, val panX: Float, val panY: Float) {
     fun scaledAround(factor: Float, focusX: Float, focusY: Float): PdfViewport = scaledAndMoved(
         factor = factor,
@@ -16,7 +19,7 @@ data class PdfViewport(val zoom: Float, val panX: Float, val panY: Float) {
         focusX: Float,
         focusY: Float,
     ): PdfViewport {
-        val nextZoom = (zoom * factor).coerceIn(1f, 5f)
+        val nextZoom = (zoom * factor).coerceIn(DEFAULT_PDF_ZOOM_PERCENT / 100f, MAX_PDF_ZOOM_PERCENT / 100f)
         val ratio = nextZoom / zoom
         return copy(
             zoom = nextZoom,

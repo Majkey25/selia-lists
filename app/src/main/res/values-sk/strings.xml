@@ -97,6 +97,8 @@
     <string name="undo">Vrátiť</string>
     <string name="redo">Znova</string>
     <string name="done">Hotovo</string>
+    <string name="hide_editing_tools">Skryť nástroje</string>
+    <string name="show_editing_tools">Zobraziť nástroje</string>
     <string name="previous">Predchádzajúca</string>
     <string name="next">Ďalšia</string>
     <string name="pdf_page">Strana PDF %1$d z %2$d</string>
@@ -140,6 +142,12 @@
     <string name="theme_grove">Háj</string>
     <string name="theme_ember">Žiara</string>
     <string name="theme_iris">Kosatec</string>
+    <string name="theme_lagoon">Lagúna</string>
+    <string name="theme_rose">Ruža</string>
+    <string name="theme_slate">Bridlica</string>
+    <string name="theme_custom">Vlastný</string>
+    <string name="theme_accent_hex">Farba motívu</string>
+    <string name="theme_accent_hex_hint">Šesť hexadecimálnych znakov, napríklad #247668.</string>
     <string name="theme_light">Svetlý</string>
     <string name="theme_dark">Tmavý</string>
     <string name="reader_tab_bookmark">Záložka</string>
@@ -185,6 +193,10 @@
     <string name="language_polish">Polski</string>
     <string name="keep_screen_awake">Nevypínať obrazovku</string>
     <string name="page_fit">Prispôsobenie strany</string>
+    <string name="pdf_zoom">Priblíženie PDF</string>
+    <string name="pdf_zoom_status">Aktuálne %1$d %% · Uložené predvolené %2$d %%</string>
+    <string name="save_pdf_zoom">Uložiť ako predvolené pre všetky PDF</string>
+    <string name="reset_pdf_zoom">Vrátiť priblíženie na 100 %</string>
     <string name="fit_page">Strana</string>
     <string name="fit_width">Šírka</string>
     <string name="page_turn_taps">Otáčanie ťuknutím</string>
@@ -196,7 +208,7 @@
     <string name="medium">Stredné</string>
     <string name="large">Veľké</string>
     <string name="app_version">Verzia</string>
-    <string name="android_requirement">Vyžaduje Android 10 alebo novší</string>
+    <string name="android_requirement">Vyžaduje Android 9 alebo novší</string>
     <string name="privacy_offline">Offline. Bez účtu a zberu dát.</string>
     <string name="privacy_policy">Zásady ochrany súkromia</string>
     <string name="license">Licencia</string>
@@ -207,6 +219,9 @@
     <string name="underline">Podčiarknutie</string>
     <string name="strike_through">Prečiarknutie</string>
     <string name="text_box">Textové pole</string>
+    <string name="insert_text">Vložiť text</string>
+    <string name="plain_text_tool">Text</string>
+    <string name="plain_text_too_long">Tento text sa na stranu nezmestí.</string>
     <string name="line">Čiara</string>
     <string name="arrow">Šípka</string>
     <string name="rectangle">Obdĺžnik</string>

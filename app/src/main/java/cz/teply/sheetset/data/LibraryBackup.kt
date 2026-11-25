@@ -24,6 +24,7 @@ import java.util.zip.ZipOutputStream
 
 private const val BACKUP_FORMAT = "sheetset-backup"
 private const val BACKUP_VERSION = 2
+internal const val BACKUP_FILE_BASENAME = "SeliaLists-Backup"
 // ponytail: 1 GiB bounds untrusted ZIPs; raise after testing larger real libraries.
 internal const val MAX_BACKUP_BYTES = 1L * 1024L * 1024L * 1024L
 internal const val MAX_BACKUP_ENTRIES = 20_000
@@ -309,6 +310,7 @@ private class BackupOutputStream(output: OutputStream) : FilterOutputStream(outp
 private fun AppSettings.toJson(): JSONObject = JSONObject()
     .put("keepScreenAwake", keepScreenAwake)
     .put("pageFit", pageFit.name)
+    .put("defaultZoomPercent", defaultZoomPercent)
     .put("pageTurnTaps", pageTurnTaps)
     .put("pageTurnSwipes", pageTurnSwipes)
     .put("autoHideControls", autoHideControls)
@@ -319,6 +321,7 @@ private fun AppSettings.toJson(): JSONObject = JSONObject()
     .put("themeMode", if (themeMode == ThemeMode.SYSTEM) ThemeMode.LIGHT.name else themeMode.name)
     .put("followSystemTheme", themeMode == ThemeMode.SYSTEM)
     .put("themePalette", themePalette.name)
+    .put("customAccentRgb", customAccentRgb)
     .put("editor", JSONObject(AnnotationEditorSettingsJson.encode(editor)))
 
 private fun JSONObject.toSettings(version: Int): AppSettings = try {
@@ -334,6 +337,11 @@ private fun JSONObject.toSettings(version: Int): AppSettings = try {
     AppSettings(
         keepScreenAwake = getBoolean("keepScreenAwake"),
         pageFit = PageFit.valueOf(getString("pageFit")),
+        defaultZoomPercent = if (has("defaultZoomPercent")) {
+            requiredInt("defaultZoomPercent")
+        } else {
+            defaults.defaultZoomPercent
+        },
         pageTurnTaps = getBoolean("pageTurnTaps"),
         pageTurnSwipes = getBoolean("pageTurnSwipes"),
         autoHideControls = getBoolean("autoHideControls"),
@@ -352,6 +360,7 @@ private fun JSONObject.toSettings(version: Int): AppSettings = try {
         themePalette = ThemePalette.entries.firstOrNull { it.name == optString("themePalette") }
             ?: defaults.themePalette,
         editor = editorRaw?.let(AnnotationEditorSettingsJson::decode) ?: defaults.editor,
+        customAccentRgb = if (has("customAccentRgb")) requiredInt("customAccentRgb") else defaults.customAccentRgb,
     )
 } catch (error: Exception) {
     throw BackupException("Backup settings are invalid", error)

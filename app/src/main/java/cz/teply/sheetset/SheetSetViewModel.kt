@@ -8,6 +8,7 @@ import androidx.core.content.FileProvider
 import androidx.core.content.res.ResourcesCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import cz.teply.sheetset.data.BACKUP_FILE_BASENAME
 import cz.teply.sheetset.data.LibraryRepository
 import cz.teply.sheetset.data.Bookmark
 import cz.teply.sheetset.data.PdfImport
@@ -42,9 +43,6 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
     private val repository = LibraryRepository(File(application.filesDir, "library"))
     private val settingsStore = SettingsStore(
         application.getSharedPreferences("sheetset-settings", Context.MODE_PRIVATE),
-    )
-    private val symbolTypeface = requireNotNull(
-        ResourcesCompat.getFont(application, R.font.noto_music_regular),
     )
     private val annotationSaveMutex = Mutex()
     private val annotationSaves = AnnotationSaveCoordinator(
@@ -284,12 +282,13 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
             mutableState.update { it.copy(loading = true, error = null) }
             try {
                 withContext(Dispatchers.IO) {
-                    val resolver = getApplication<Application>().contentResolver
+                    val application = getApplication<Application>()
+                    val resolver = application.contentResolver
                     PdfExporter.export(
                         reader.file,
                         { resolver.openOutputStream(uri, "w") ?: throw FileNotFoundException(uri.toString()) },
                         reader.annotations,
-                        symbolTypeface,
+                        requireNotNull(ResourcesCompat.getFont(application, R.font.noto_music_regular)),
                     )
                 }
             } catch (error: CancellationException) {
@@ -455,13 +454,12 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
                     annotationSaves.pendingAnnotations(score.id) ?: repository.loadAnnotations(score.id)
                 }
                 libraryMutationMutex.withLock {
-                    repository.saveReaderPosition(
+                    val catalog = repository.saveReaderPosition(
                         score.id,
                         page = pageIndex,
                         part = pagePart,
                         viewedAt = System.currentTimeMillis(),
                     )
-                    val catalog = repository.load()
                     val savedScore = catalog.scores.first { it.id == score.id }
                     val pendingAnnotations = annotationSaves.pendingAnnotations(score.id)
                     mutableState.update {
@@ -498,20 +496,23 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         if (!directory.exists() && !directory.mkdirs()) {
             throw IllegalStateException("Could not create share directory")
         }
-        val files = directory.listFiles().orEmpty().filter(File::isFile)
+        val files = directory.listFiles().orEmpty().filter { file ->
+            val name = file.name.removePrefix(".")
+            file.isFile && (name.startsWith(BACKUP_FILE_BASENAME) || name.startsWith("SheetSet-Backup"))
+        }
         val oldestAllowed = System.currentTimeMillis() - SHARED_BACKUP_MAX_AGE_MS
-        files.filter { it.name.startsWith("SheetSet-Backup") && it.extension == "zip" }
+        files.filter { !it.name.startsWith(".") && it.extension == "zip" }
             .sortedByDescending(File::lastModified)
             .forEachIndexed { index, file ->
                 if (index >= MAX_SHARED_BACKUPS - 1 || file.lastModified() < oldestAllowed) {
                     if (!file.delete()) throw IllegalStateException("Could not remove old shared backup")
                 }
             }
-        files.filter { it.name.startsWith(".SheetSet-Backup") && it.extension == "tmp" }
+        files.filter { it.name.startsWith(".") && it.extension == "tmp" }
             .forEach { file ->
                 if (!file.delete()) throw IllegalStateException("Could not remove unfinished shared backup")
             }
-        val temporary = File.createTempFile(".SheetSet-Backup-", ".tmp", directory)
+        val temporary = File.createTempFile(".$BACKUP_FILE_BASENAME-", ".tmp", directory)
         try {
             FileOutputStream(temporary).use { output ->
                 repository.createBackup(output, settings, languageTag)

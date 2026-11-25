@@ -40,6 +40,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -83,6 +84,7 @@ import cz.teply.sheetset.pdf.MAX_TEXT_LENGTH
 import cz.teply.sheetset.pdf.MIN_ANNOTATION_WIDTH
 import cz.teply.sheetset.pdf.NormalizedRect
 import cz.teply.sheetset.pdf.PageAnnotation
+import cz.teply.sheetset.pdf.PlainTextAnnotation
 import cz.teply.sheetset.pdf.ReaderTool
 import cz.teply.sheetset.pdf.ShapeAnnotation
 import cz.teply.sheetset.pdf.SUPPORTED_SYMBOL_IDS
@@ -119,6 +121,7 @@ internal data class AnnotationToolbarState(
     val canRedo: Boolean,
     val previousEnabled: Boolean,
     val nextEnabled: Boolean,
+    val canInsertText: Boolean,
     val expanded: Boolean,
     val straightLine: Boolean,
     val width: Int,
@@ -145,6 +148,8 @@ internal fun AnnotationToolbar(
     onNext: () -> Unit,
 ) {
     val hasSelection = state.selectedIds.isNotEmpty()
+    val objectTools = remember(state.editor) { orderedObjectTools(state.editor) }
+    val textTool = objectTools.firstOrNull { it.tool == ReaderTool.TEXT_BOX }
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -165,6 +170,16 @@ internal fun AnnotationToolbar(
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (state.tool != ReaderTool.ERASER) {
+                        CurrentColorControl(state.color, onColor)
+                        if (state.expanded) {
+                            ToolbarControl(
+                                stringResource(R.string.eyedropper),
+                                R.drawable.ic_colorize_24,
+                                onClick = onEyedropper,
+                            )
+                        }
+                    }
                     if (showsWidth(state)) {
                         WidthSliderControl(state.width, state.color, onWidth)
                     }
@@ -176,18 +191,8 @@ internal fun AnnotationToolbar(
                             onClick = onStraightLine,
                         )
                     }
-                    if (state.tool != ReaderTool.ERASER) {
-                        CurrentColorControl(state.color, onColor)
-                        if (state.expanded) {
-                            ToolbarControl(
-                                stringResource(R.string.eyedropper),
-                                R.drawable.ic_colorize_24,
-                                onClick = onEyedropper,
-                            )
-                        }
-                    }
                     if (hasSelection) {
-                        if (state.selectedAnnotation is TextBoxAnnotation) {
+                        if (state.selectedAnnotation is TextBoxAnnotation || state.selectedAnnotation is PlainTextAnnotation) {
                             ToolbarControl(
                                 stringResource(R.string.edit_text),
                                 R.drawable.ic_text_fields_24,
@@ -205,6 +210,14 @@ internal fun AnnotationToolbar(
                             onClick = onDelete,
                         )
                     }
+                }
+                if (textTool != null) {
+                    ToolbarControl(
+                        stringResource(R.string.insert_text),
+                        textTool.icon,
+                        selected = state.tool == textTool.tool,
+                        enabled = state.canInsertText,
+                    ) { onTool(textTool.tool) }
                 }
                 ToolbarControl(
                     stringResource(R.string.next),
@@ -259,11 +272,12 @@ internal fun AnnotationToolbar(
                             )
                         }
                     } else {
-                        orderedObjectTools(state.editor).forEach { definition ->
+                        objectTools.forEach { definition ->
                             ToolbarControl(
                                 stringResource(definition.label),
                                 definition.icon,
                                 selected = state.tool == definition.tool,
+                                enabled = definition.tool != ReaderTool.TEXT_BOX || state.canInsertText,
                             ) { onTool(definition.tool) }
                         }
                     }
@@ -303,9 +317,9 @@ internal fun ColorPanel(
     opacity: Int,
     quickColors: List<AnnotationColor>,
     recentColors: List<AnnotationColor>,
-    onDismiss: () -> Unit,
     onEyedropper: (() -> Unit)?,
-    onConfirm: (AnnotationColor, Int) -> Unit,
+    onPreview: ((AnnotationColor, Int) -> Unit)? = null,
+    onClose: (AnnotationColor, Int) -> Unit,
 ) {
     val initialHsv = remember(selected) { selected.toHsv() }
     var hue by remember(selected) { mutableFloatStateOf(initialHsv[0]) }
@@ -316,29 +330,36 @@ internal fun ColorPanel(
     var hexInput by remember(selected) { mutableStateOf(selected.rgbHex()) }
     val preview = hsvAnnotationColor(hue, saturation, value)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val maxContentHeight = LocalConfiguration.current.screenHeightDp.dp * 0.8f
+    val maxContentHeight = LocalConfiguration.current.screenHeightDp.dp * 0.6f
 
-    fun choose(color: AnnotationColor) {
-        val hsv = color.toHsv()
-        hue = hsv[0]
-        saturation = hsv[1]
-        value = hsv[2]
-        hexInput = color.rgbHex()
-    }
+    SideEffect { onPreview?.invoke(preview, alpha) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    ModalBottomSheet(
+        onDismissRequest = { onClose(preview, alpha) },
+        sheetState = sheetState,
+        scrimColor = Color.Transparent,
+        dragHandle = null,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(stringResource(R.string.color), Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+            IconButton(onClick = { onClose(preview, alpha) }) {
+                Icon(painterResource(R.drawable.ic_close_24), contentDescription = stringResource(R.string.close))
+            }
+        }
         Column(
             Modifier.fillMaxWidth().heightIn(max = maxContentHeight)
                 .testTag(COLOR_PANEL_SCROLL_TAG).verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 8.dp),
         ) {
-            Text(stringResource(R.string.color), style = MaterialTheme.typography.headlineSmall)
             Text(
                 stringResource(R.string.quick_colors),
-                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
                 style = MaterialTheme.typography.labelLarge,
             )
-            SwatchRows(quickColors.take(8), preview, includeEncoded = false, onColor = ::choose)
+            SwatchRows(quickColors.take(8), preview, includeEncoded = false) { onClose(it, alpha) }
             if (recentColors.isNotEmpty()) {
                 Text(
                     stringResource(R.string.recent_colors),
@@ -349,8 +370,7 @@ internal fun ColorPanel(
                     recentColors.take(4),
                     preview,
                     includeEncoded = true,
-                    onColor = ::choose,
-                )
+                ) { onClose(it, alpha) }
             }
             LabeledSlider(
                 label = stringResource(R.string.opacity),
@@ -410,16 +430,6 @@ internal fun ColorPanel(
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
-                TextButton(
-                    enabled = parseHexAnnotationColor(hexInput) != null,
-                    onClick = { onConfirm(preview, alpha) },
-                ) {
-                    Text(stringResource(R.string.apply))
-                }
-            }
-            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -527,9 +537,8 @@ internal fun TextAnnotationDialog(
             opacity = opacity,
             quickColors = quickColors,
             recentColors = recentColors,
-            onDismiss = { colorOpen = false },
             onEyedropper = null,
-            onConfirm = { nextColor, nextOpacity ->
+            onClose = { nextColor, nextOpacity ->
                 colorArgb = nextColor.argb
                 opacity = nextOpacity
                 colorOpen = false

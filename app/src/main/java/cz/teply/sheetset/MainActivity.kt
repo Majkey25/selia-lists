@@ -3,6 +3,7 @@ package cz.teply.sheetset
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -10,10 +11,12 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.core.view.WindowCompat
@@ -36,13 +39,19 @@ class MainActivity : AppCompatActivity() {
             val state by viewModel.state.collectAsStateWithLifecycle()
             val view = LocalView.current
             val darkTheme = isDarkTheme(state.settings.themeMode)
-            SideEffect {
-                WindowCompat.getInsetsController(window, view).apply {
-                    isAppearanceLightStatusBars = !darkTheme
-                    isAppearanceLightNavigationBars = !darkTheme
+            SheetSetTheme(darkTheme, state.settings.themePalette, state.settings.customAccentRgb) {
+                val navigationBarColor = MaterialTheme.colorScheme.surface.toArgb()
+                SideEffect {
+                    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.P) {
+                        // Android 9 lacks automatic navigation bar contrast enforcement.
+                        @Suppress("DEPRECATION")
+                        window.navigationBarColor = navigationBarColor
+                    }
+                    WindowCompat.getInsetsController(window, view).apply {
+                        isAppearanceLightStatusBars = !darkTheme
+                        isAppearanceLightNavigationBars = !darkTheme
+                    }
                 }
-            }
-            SheetSetTheme(darkTheme, state.settings.themePalette) {
                 BoxWithConstraints {
                     SheetSetApp(
                         state = state,

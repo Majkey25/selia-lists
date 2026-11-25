@@ -10,7 +10,7 @@ import org.junit.Test
 class AnnotationJsonMigrationTest {
     @Test
     fun duplicatePageIndexesAreRejectedInEveryVersion() {
-        for (version in 1..3) {
+        for (version in 1..4) {
             assertThrows(IllegalArgumentException::class.java) {
                 AnnotationJson.decode("""{"version":$version,"pages":{"0":[],"00":[]}}""")
             }
@@ -228,6 +228,54 @@ class AnnotationJsonMigrationTest {
     }
 
     @Test
+    fun plainAndBoxedTextSurviveVersionFourRoundTripTogether() {
+        val plain = plainTextAnnotation()
+        val boxed = TextBoxAnnotation("old", plain.bounds, "Original", AnnotationTextSize.MEDIUM)
+        val source = DocumentAnnotations(mapOf(1 to listOf(boxed, plain)))
+        val raw = AnnotationJson.encode(source)
+
+        assertEquals(4, JSONObject(raw).getInt("version"))
+        assertEquals(source, AnnotationJson.decode(raw))
+        assertEquals(3, JSONObject(AnnotationJson.encode(source.withPage(1, listOf(boxed)))).getInt("version"))
+    }
+
+    @Test
+    fun malformedPlainTextIsRejectedDuringDecode() {
+        val raw = JSONObject(AnnotationJson.encode(DocumentAnnotations(mapOf(0 to listOf(plainTextAnnotation())))))
+        val annotation = raw.getJSONObject("pages").getJSONArray("0").getJSONObject(0)
+        assertThrows(IllegalArgumentException::class.java) {
+            AnnotationJson.decode(raw.put("version", 3).toString())
+        }
+        raw.put("version", 4)
+
+        for ((field, invalidValue) in listOf(
+            "fontSize" to 0.251,
+            "rotationDegrees" to 361,
+            "opacity" to 12.5,
+            "text" to " ",
+            "text" to 12,
+        )) {
+            val previous = annotation.get(field)
+            annotation.put(field, invalidValue)
+            assertThrows(IllegalArgumentException::class.java) { AnnotationJson.decode(raw.toString()) }
+            annotation.put(field, previous)
+        }
+    }
+
+    @Test
+    fun plainTextUsesTheSharedDecodedPageBudget() {
+        val text = plainTextAnnotation().copy(text = "a".repeat(MAX_TEXT_LENGTH))
+        val boxed = List(15) { index ->
+            TextBoxAnnotation("old-$index", text.bounds, text.text, AnnotationTextSize.MEDIUM)
+        }
+        val raw = JSONObject(AnnotationJson.encode(DocumentAnnotations(mapOf(0 to listOf(text) + boxed.dropLast(1)))))
+        val page = raw.getJSONObject("pages").getJSONArray("0")
+        page.put(JSONObject(page.getJSONObject(1).toString()).put("id", boxed.last().id))
+
+        assertThrows(AnnotationLimitException::class.java) { AnnotationJson.decode(raw.toString()) }
+    }
+
+    @Test
     fun symbolAppearanceSurvivesVersionThreeRoundTrip() {
         val source = DocumentAnnotations(mapOf(3 to listOf(symbolAnnotation())))
 
@@ -257,6 +305,16 @@ class AnnotationJsonMigrationTest {
         assertThrows(IllegalArgumentException::class.java) { valid.copy(opacity = -1) }
         assertThrows(IllegalArgumentException::class.java) { valid.copy(opacity = 256) }
     }
+
+    private fun plainTextAnnotation(): PlainTextAnnotation = PlainTextAnnotation(
+        id = "plain",
+        bounds = NormalizedRect(0.1f, 0.2f, 0.35f, 0.27f),
+        text = "Příliš žluťoučký kůň 🎶\nrit.",
+        fontSize = 0.04f,
+        rotationDegrees = -135f,
+        color = AnnotationColor.BLUE,
+        opacity = 123,
+    )
 
     private fun symbolAnnotation(): SymbolAnnotation = SymbolAnnotation(
         id = "symbol",

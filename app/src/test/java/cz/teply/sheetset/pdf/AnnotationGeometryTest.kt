@@ -603,6 +603,137 @@ class AnnotationGeometryTest {
         }
     }
 
+    @Test
+    fun plainTextHitAndLassoFollowRotationOnPortraitPages() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.3f, 0.45f, 0.7f, 0.55f), "Repeat", 0.036f, 90f)
+        val annotations = listOf(text)
+
+        assertSame(text, annotations.topmostHit(NormalizedPoint(0.5f, 0.59f), 0f, 1_000f, 2_000f))
+        assertNull(annotations.topmostHit(NormalizedPoint(0.66f, 0.5f), 0f, 1_000f, 2_000f))
+        assertEquals(
+            setOf("plain"),
+            annotations.lassoSelection(NormalizedRect(0.48f, 0.57f, 0.52f, 0.59f), 1_000f, 2_000f),
+        )
+        val moved = annotations.translateSelection(setOf("plain"), 0f, 1f, 1_000f, 2_000f).single()
+        assertEquals(0.95f, moved.normalizedBounds().bottom, 0.0001f)
+        assertTrue(moved.hitTest(NormalizedPoint(0.5f, 0.99f), 0f, 1_000f, 2_000f))
+    }
+
+    @Test
+    fun plainTextScaleChangesFontAndBoundsTogetherAndRotationKeepsSize() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.4f, 0.45f, 0.6f, 0.55f), "Repeat", 0.036f)
+        val width = 1_000f
+        val height = 2_000f
+        val handle = text.resizeHandles(width, height).getValue(AnnotationHandle.BOTTOM_RIGHT)
+        val larger = text.resized(
+            AnnotationHandle.BOTTOM_RIGHT,
+            NormalizedPoint(0.5f + (handle.x - 0.5f) * 1.5f, 0.5f + (handle.y - 0.5f) * 1.5f),
+            width,
+            height,
+        ) as PlainTextAnnotation
+        assertEquals(0.054f, larger.fontSize, 0.0001f)
+        assertEquals(0.3f, larger.bounds.right - larger.bounds.left, 0.0001f)
+        assertEquals(0.15f, larger.bounds.bottom - larger.bounds.top, 0.0001f)
+        val rotated = larger.resized(AnnotationHandle.ROTATION, NormalizedPoint(0.7f, 0.4f), width, height)
+            as PlainTextAnnotation
+        assertEquals(45f, rotated.rotationDegrees, 0.001f)
+        assertEquals(larger.bounds, rotated.bounds)
+        assertEquals(larger.fontSize, rotated.fontSize, 0f)
+
+        val copy = listOf(rotated).duplicateSelection(setOf("plain"), width, height) { "copy" }.last()
+            as PlainTextAnnotation
+        assertEquals(rotated.text, copy.text)
+        assertEquals(rotated.fontSize, copy.fontSize, 0f)
+        assertEquals(rotated.rotationDegrees, copy.rotationDegrees, 0f)
+        assertEquals(rotated.bounds.left + 0.01f, copy.bounds.left, 0.0001f)
+    }
+
+    @Test
+    fun plainTextRotationFitsBackInsidePageWithoutShrinking() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.7f, 0.9f, 1f, 1f), "Repeat", 0.036f)
+        val rotated = text.resized(AnnotationHandle.ROTATION, NormalizedPoint(0.95f, 0.95f), 1_000f, 2_000f)
+            as PlainTextAnnotation
+
+        assertEquals(90f, rotated.rotationDegrees, 0.001f)
+        assertEquals(text.fontSize, rotated.fontSize, 0f)
+        assertEquals(0.975f, rotated.bounds.bottom, 0.0001f)
+        assertTrue(rotated.hitTest(NormalizedPoint(0.85f, 0.999f), 0f, 1_000f, 2_000f))
+    }
+
+    @Test
+    fun plainTextGestureScalesRotatesAndMovesAroundItsPixelFocus() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.5f, 0.45f, 0.7f, 0.55f), "Repeat", 0.036f)
+
+        val transformed = text.transformed(2f, 90f, 500f, 1_000f, 400f, 800f, 1_000f, 2_000f)
+
+        assertEquals(0.072f, transformed.fontSize, 0.0001f)
+        assertEquals(90f, transformed.rotationDegrees, 0.0001f)
+        assertEquals(0.4f, (transformed.bounds.left + transformed.bounds.right) / 2f, 0.0001f)
+        assertEquals(0.5f, (transformed.bounds.top + transformed.bounds.bottom) / 2f, 0.0001f)
+        assertEquals(0.4f, transformed.bounds.right - transformed.bounds.left, 0.0001f)
+        assertEquals(0.2f, transformed.bounds.bottom - transformed.bounds.top, 0.0001f)
+        assertEquals(text.text, transformed.text)
+        assertEquals(text.id, transformed.id)
+    }
+
+    @Test
+    fun plainTextGestureUsesClampedFontScaleForTheFocusTransform() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.5f, 0.45f, 0.7f, 0.55f), "Repeat", 0.2f)
+
+        val larger = text.transformed(10f, 0f, 500f, 1_000f, 500f, 1_000f, 1_000f, 2_000f)
+        assertEquals(MAX_PLAIN_TEXT_SIZE, larger.fontSize, 0f)
+        assertEquals(0.625f, (larger.bounds.left + larger.bounds.right) / 2f, 0.0001f)
+        val smaller = text.transformed(0.0001f, 0f, 500f, 1_000f, 500f, 1_000f, 1_000f, 2_000f)
+        assertEquals(MIN_PLAIN_TEXT_SIZE, smaller.fontSize, 0f)
+        assertEquals(0.504f, (smaller.bounds.left + smaller.bounds.right) / 2f, 0.0001f)
+    }
+
+    @Test
+    fun plainTextGestureKeepsTheRotatedInkOnThePage() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.4f, 0.4f, 0.6f, 0.6f), "Repeat", 0.036f)
+        val transformed = text.transformed(100f, 90f, 500f, 1_000f, 2_000f, 4_000f, 1_000f, 2_000f)
+
+        assertTrue(transformed.fitsPage(1_000f, 2_000f))
+        assertEquals(90f, transformed.rotationDegrees, 0.001f)
+        assertEquals(0.5f, (transformed.bounds.left + transformed.bounds.right) / 2f, 0.0001f)
+        assertEquals(0.75f, (transformed.bounds.top + transformed.bounds.bottom) / 2f, 0.0001f)
+        assertEquals(0.09f, transformed.fontSize, 0.0001f)
+    }
+
+    @Test
+    fun plainTextGestureAcceptsOffPageFocusAndNormalizesRotation() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.4f, 0.45f, 0.6f, 0.55f), "Repeat", 0.036f, 350f)
+
+        assertSame(text, text.transformed(1f, 0f, 500f, 1_000f, 500f, 1_000f, 1_000f, 2_000f))
+        assertSame(text, text.transformed(1f, 360f, -100f, 1_000f, -100f, 1_000f, 1_000f, 2_000f))
+
+        val moved = text.transformed(1f, 20f, -100f, 1_000f, -100f, 1_000f, 1_000f, 2_000f)
+
+        assertEquals(10f, moved.rotationDegrees, 0.001f)
+        assertEquals(text.fontSize, moved.fontSize, 0f)
+        assertTrue(moved.fitsPage(1_000f, 2_000f))
+    }
+
+    @Test
+    fun plainTextGestureRejectsInvalidScaleRotationFocusAndPageSize() {
+        val text = PlainTextAnnotation("plain", NormalizedRect(0.4f, 0.45f, 0.6f, 0.55f), "Repeat", 0.036f)
+
+        for (scale in listOf(0f, -1f, Float.NaN, Float.POSITIVE_INFINITY)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                text.transformed(scale, 0f, 500f, 1_000f, 500f, 1_000f, 1_000f, 2_000f)
+            }
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            text.transformed(1f, Float.NaN, 500f, 1_000f, 500f, 1_000f, 1_000f, 2_000f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            text.transformed(1f, 0f, Float.POSITIVE_INFINITY, 1_000f, 500f, 1_000f, 1_000f, 2_000f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            text.transformed(1f, 0f, 500f, 1_000f, 500f, 1_000f, 0f, 2_000f)
+        }
+    }
+
     private fun rectangle(
         id: String,
         left: Float,

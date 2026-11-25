@@ -9,6 +9,7 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
@@ -18,8 +19,10 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -53,6 +56,7 @@ import cz.teply.sheetset.pdf.AnnotationTextAlignment
 import cz.teply.sheetset.pdf.InkAnnotation
 import cz.teply.sheetset.pdf.NormalizedRect
 import cz.teply.sheetset.pdf.PageAnnotation
+import cz.teply.sheetset.pdf.PlainTextAnnotation
 import cz.teply.sheetset.pdf.TextBoxAnnotation
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.AnnotationTextSize
@@ -449,6 +453,7 @@ class SheetSetFlowTest {
         val first = Score("score-1", "First song", "score-1.pdf", 2, 1L)
         val second = Score("score-2", "Second song", "score-2.pdf", 2, 2L)
         val third = Score("score-3", "Third song", "score-3.pdf", 2, 3L)
+        var busy by mutableStateOf(false)
         var catalog by mutableStateOf(
             LibraryCatalog(
                 scores = listOf(first, second, third),
@@ -464,7 +469,7 @@ class SheetSetFlowTest {
                         removeScore = { id, index -> catalog = catalog.removeScoreFromSetlist(id, index) },
                         reorderScores = { id, ids -> catalog = catalog.reorderScores(id, ids) },
                     ),
-                    busy = false,
+                    busy = busy,
                     onBack = {},
                 )
             }
@@ -493,8 +498,16 @@ class SheetSetFlowTest {
 
         composeRule.runOnIdle {
             assertEquals(listOf(second.id, third.id), catalog.setlists.single().scoreIds)
+            busy = true
         }
-        composeRule.onNodeWithText("Done").assertIsEnabled()
+        composeRule.onNodeWithText("Done").assertIsEnabled().performClick()
+        composeRule.onAllNodesWithContentDescription("Reorder").assertCountEquals(0)
+        composeRule.onNodeWithText("Edit order").assertIsNotEnabled()
+        composeRule.runOnIdle {
+            busy = false
+            assertEquals(listOf(second.id, third.id), catalog.setlists.single().scoreIds)
+        }
+        composeRule.onNodeWithText("Edit order").assertIsEnabled()
     }
 
     @Test
@@ -674,6 +687,18 @@ class SheetSetFlowTest {
         composeRule.onAllNodesWithContentDescription("Move up").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Move down").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Remove").assertCountEquals(2)
+
+        composeRule.onNodeWithText("Add PDFs").performClick()
+        composeRule.onNodeWithText("Cancel").assertIsDisplayed()
+        Espresso.pressBack()
+        composeRule.onNodeWithText("Done").assertIsDisplayed()
+        Espresso.pressBack()
+        composeRule.onAllNodesWithContentDescription("Remove").assertCountEquals(0)
+
+        composeRule.onNodeWithText("Edit order").performClick()
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.onNodeWithText("Edit order").assertIsDisplayed()
+        composeRule.onNodeWithText(first.title).assertIsDisplayed()
     }
 
     @Test
@@ -753,9 +778,8 @@ class SheetSetFlowTest {
         }
 
         composeRule.onNodeWithContentDescription("Pen").assertIsSelected()
-        composeRule.onNodeWithContentDescription("Straight line").assertIsNotSelected()
-        composeRule.onNodeWithContentDescription("Straight line").performClick()
-        composeRule.onNodeWithContentDescription("Straight line").assertIsSelected()
+        composeRule.onNodeWithContentDescription("Straight line")
+            .performScrollTo().assertIsNotSelected().performClick().assertIsSelected()
 
         composeRule.onNodeWithContentDescription("Eraser").performClick()
         composeRule.onAllNodesWithContentDescription("Color").assertCountEquals(0)
@@ -803,6 +827,34 @@ class SheetSetFlowTest {
     }
 
     @Test
+    fun textShortcutInDrawingToolbarOpensFocusedEditorWithoutAnotherTap() {
+        val file = onePagePdf()
+        var saved: PageAnnotation? = null
+        try {
+            setReaderContent(file = file, onSaveAnnotations = { _, page, annotations ->
+                saved = annotations.pages[page]?.singleOrNull()
+            })
+            composeRule.onNodeWithContentDescription("Annotation").performClick()
+            composeRule.onNodeWithContentDescription("Pen").performClick()
+            openInlineText()
+            composeRule.onAllNodes(isDialog()).assertCountEquals(0)
+            composeRule.onNode(hasSetTextAction()).assertIsFocused().performTextInput("Repeat twice")
+            composeRule.onNodeWithContentDescription("Done").performClick()
+
+            composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(0)
+            composeRule.onNodeWithContentDescription("Select").assertIsSelected()
+            composeRule.runOnIdle {
+                val text = saved as PlainTextAnnotation
+                assertEquals("Repeat twice", text.text)
+                assertEquals(0.5f, text.bounds.left, 0.02f)
+                assertEquals(0.5f, text.bounds.top, 0.02f)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun doneThenAnnotateRestoresTheLastEditorTool() {
         setReaderContent()
         composeRule.onNodeWithContentDescription("Annotation").performClick()
@@ -840,12 +892,11 @@ class SheetSetFlowTest {
         events += "objects-start"
         composeRule.onNodeWithContentDescription("Objects").performClick()
         events += "objects"
-        composeRule.onNodeWithContentDescription("Text box").performClick()
+        openInlineText()
         events += "text-tool"
-        waitForPdfPage()
-        composeRule.onNodeWithTag(PDF_PAGE_TEST_TAG).performTouchInput { click(center) }
+        composeRule.onNode(hasSetTextAction()).assertIsFocused()
         events += "text-open"
-        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithContentDescription("Done").performClick()
         events += "text-cancel"
         composeRule.onNodeWithContentDescription("Done").performClick()
         events += "done"
@@ -888,6 +939,7 @@ class SheetSetFlowTest {
         composeRule.onNodeWithContentDescription("Draw").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Ellipse").assertIsSelected()
         composeRule.onAllNodesWithContentDescription("Select").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Insert text").assertDoesNotExist()
     }
 
     @Test
@@ -942,6 +994,7 @@ class SheetSetFlowTest {
     @Test
     fun colorPanelShowsQuickRecentCustomOpacityAndEyedropper() {
         val editor = AppSettings().editor
+        var applied: AnnotationColor? = null
         composeRule.setContent {
             SheetSetTheme {
                 ColorPanel(
@@ -949,9 +1002,8 @@ class SheetSetFlowTest {
                     opacity = 255,
                     quickColors = editor.quickColors,
                     recentColors = listOf(AnnotationColor(0xFF123456.toInt())),
-                    onDismiss = {},
                     onEyedropper = {},
-                    onConfirm = { _, _ -> },
+                    onClose = { color, _ -> applied = color },
                 )
             }
         }
@@ -975,9 +1027,11 @@ class SheetSetFlowTest {
         composeRule.onNode(hasSetTextAction()).performTextReplacement("#12ABEF")
         composeRule.onNode(hasSetTextAction()).assertTextContains("#12ABEF")
         composeRule.onAllNodesWithText("#12ABEF").assertCountEquals(2)
-        composeRule.onNodeWithText("Apply").assertIsEnabled()
+        composeRule.onNodeWithText("Apply").assertDoesNotExist()
         composeRule.onAllNodesWithText("Saturation").assertCountEquals(0)
         composeRule.onAllNodesWithText("Brightness").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Close").performClick()
+        composeRule.runOnIdle { assertEquals(AnnotationColor(0xFF12ABEF.toInt()), applied) }
     }
 
     @Test
@@ -1076,6 +1130,8 @@ class SheetSetFlowTest {
                     reader = reader,
                     settings = AppSettings(),
                     windowLayout = WindowLayout.COMPACT,
+                    zoomPercent = 100,
+                    onResetZoom = {},
                     onSettings = {},
                     onJump = {},
                     onAddBookmark = {},
@@ -1281,6 +1337,14 @@ class SheetSetFlowTest {
         }
         composeRule.onNodeWithTag(PDF_PAGE_TEST_TAG).assertIsDisplayed()
         composeRule.waitForIdle()
+    }
+
+    private fun openInlineText() {
+        val shortcut = hasContentDescription("Insert text") and !SemanticsMatcher.keyIsDefined(SemanticsProperties.Disabled)
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodes(shortcut).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNode(shortcut).assertIsDisplayed().performClick()
     }
 
     private fun setReaderContent(

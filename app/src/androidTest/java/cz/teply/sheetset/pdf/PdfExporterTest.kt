@@ -16,6 +16,7 @@ import androidx.test.core.app.ApplicationProvider
 import cz.teply.sheetset.R
 import cz.teply.sheetset.settings.AnnotationTextSize
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Assert.assertFalse
@@ -55,6 +56,48 @@ class PdfExporterTest {
             assertEquals("Arrow tip opacity", 128, Color.alpha(bitmap.getPixel(900, 500)))
         } finally {
             bitmap.recycle()
+        }
+    }
+
+    @Test
+    fun plainTextHasNoBoxAndKeepsRotationInTheExport() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val typeface = requireNotNull(ResourcesCompat.getFont(context, R.font.noto_music_regular))
+        val source = createBlankPdf(context, pages = 1, width = 600, height = 750)
+        val destination = File(context.cacheDir, "plain-text-${UUID.randomUUID()}.pdf")
+        val preview = Bitmap.createBitmap(800, 1_000, Bitmap.Config.ARGB_8888)
+        try {
+            val page = RectF(0f, 0f, 800f, 1_000f)
+            val text = "ALLEGRO"
+            val fontSize = 0.055f
+            val anchor = NormalizedPoint(0.35f, 0.4f)
+            val bounds = requireNotNull(AnnotationRenderer.plainTextBounds(text, anchor, fontSize, 600f, 750f))
+            assertNull(AnnotationRenderer.plainTextBounds("Note\n".repeat(60), anchor, fontSize, 600f, 750f))
+            val annotation = PlainTextAnnotation(id = "plain", bounds = bounds, text = text, fontSize = fontSize)
+            preview.eraseColor(Color.TRANSPARENT)
+            AnnotationRenderer.draw(Canvas(preview), annotation, page, typeface)
+            val boxCornerX = (bounds.left * preview.width).toInt() + 2
+            val boxCornerY = (bounds.top * preview.height).toInt() + 2
+            assertEquals("Plain text leaves the background transparent", 0, Color.alpha(preview.getPixel(boxCornerX, boxCornerY)))
+
+            val rotated = annotation.copy(rotationDegrees = 90f)
+            preview.eraseColor(Color.WHITE)
+            AnnotationRenderer.draw(Canvas(preview), rotated, page, typeface)
+            PdfExporter.export(source, destination::outputStream, DocumentAnnotations(mapOf(0 to listOf(rotated))), typeface)
+            val exported = renderPdf(destination, preview.width, preview.height)
+            try {
+                val region = NormalizedRect(0.1f, 0.1f, 0.9f, 0.9f)
+                val previewBounds = measureInk(preview, region).second
+                val exportedBounds = measureInk(exported, region).second
+                assertTrue("A rotated text line must be vertical", previewBounds.height() > previewBounds.width() * 3)
+                assertInkBounds("Plain text rotation and position", previewBounds, exportedBounds)
+            } finally {
+                exported.recycle()
+            }
+        } finally {
+            preview.recycle()
+            source.delete()
+            destination.delete()
         }
     }
 

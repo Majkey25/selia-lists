@@ -97,6 +97,8 @@
     <string name="undo">Undo</string>
     <string name="redo">Redo</string>
     <string name="done">Done</string>
+    <string name="hide_editing_tools">Hide tools</string>
+    <string name="show_editing_tools">Show tools</string>
     <string name="previous">Previous</string>
     <string name="next">Next</string>
     <string name="pdf_page">PDF page %1$d of %2$d</string>
@@ -136,6 +138,12 @@
     <string name="theme_grove">Grove</string>
     <string name="theme_ember">Ember</string>
     <string name="theme_iris">Iris</string>
+    <string name="theme_lagoon">Lagoon</string>
+    <string name="theme_rose">Rose</string>
+    <string name="theme_slate">Slate</string>
+    <string name="theme_custom">Custom</string>
+    <string name="theme_accent_hex">Accent color</string>
+    <string name="theme_accent_hex_hint">Six hex digits, for example #247668.</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="reader_tab_bookmark">Bookmark</string>
@@ -181,6 +189,10 @@
     <string name="language_polish">Polski</string>
     <string name="keep_screen_awake">Keep screen awake</string>
     <string name="page_fit">Page fit</string>
+    <string name="pdf_zoom">PDF zoom</string>
+    <string name="pdf_zoom_status">Current %1$d%% · Saved default %2$d%%</string>
+    <string name="save_pdf_zoom">Save as default for all PDFs</string>
+    <string name="reset_pdf_zoom">Reset zoom to 100%</string>
     <string name="fit_page">Page</string>
     <string name="fit_width">Width</string>
     <string name="page_turn_taps">Page-turn taps</string>
@@ -192,7 +204,7 @@
     <string name="medium">Medium</string>
     <string name="large">Large</string>
     <string name="app_version">Version</string>
-    <string name="android_requirement">Requires Android 10 or newer</string>
+    <string name="android_requirement">Requires Android 9 or newer</string>
     <string name="privacy_offline">Offline. No account or data collection.</string>
     <string name="privacy_policy">Privacy policy</string>
     <string name="license">License</string>
@@ -203,6 +215,9 @@
     <string name="underline">Underline</string>
     <string name="strike_through">Strike-through</string>
     <string name="text_box">Text box</string>
+    <string name="insert_text">Insert text</string>
+    <string name="plain_text_tool">Text</string>
+    <string name="plain_text_too_long">This text does not fit on the page.</string>
     <string name="line">Line</string>
     <string name="arrow">Arrow</string>
     <string name="rectangle">Rectangle</string>

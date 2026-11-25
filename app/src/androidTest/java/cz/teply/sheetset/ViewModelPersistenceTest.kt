@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.viewModelScope
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -374,6 +375,13 @@ class ViewModelPersistenceTest {
         val uris = withTimeout(5_000) { listOf(first.await(), second.await()) }
         assertNotEquals(uris[0], uris[1])
         uris.forEachIndexed { index, uri ->
+            val displayName = requireNotNull(
+                application.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null),
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                cursor.getString(0)
+            }
+            assertTrue(displayName.startsWith("SeliaLists-Backup-") && displayName.endsWith(".zip"))
             val restored = LibraryRepository(File(root, "shared-restore-$index"))
             requireNotNull(application.contentResolver.openInputStream(uri)).use { restored.restoreBackup(it) }
             assertEquals(score.id, restored.load().scores.single().id)
@@ -386,17 +394,24 @@ class ViewModelPersistenceTest {
     fun shareCacheKeepsThreeRecentArchivesAndRemovesAbandonedTemporaryFiles() = runBlocking {
         val directory = sharedDirectory().apply { check(mkdirs()) }
         val now = System.currentTimeMillis()
-        val recent = (1..4).map { index ->
-            File(directory, "SheetSet-Backup-$index.zip").apply {
+        val recent = listOf(
+            "SheetSet-Backup.zip",
+            "SeliaLists-Backup-2.zip",
+            "SheetSet-Backup-3.zip",
+            "SeliaLists-Backup-4.zip",
+        ).mapIndexed { index, name ->
+            File(directory, name).apply {
                 writeText("Old cached export")
-                check(setLastModified(now - index * 1_000L))
+                check(setLastModified(now - (index + 1) * 1_000L))
             }
         }
         val expired = File(directory, "SheetSet-Backup-expired.zip").apply {
             writeText("Expired cached export")
             check(setLastModified(now - 25L * 60L * 60L * 1_000L))
         }
-        val abandoned = File(directory, ".SheetSet-Backup-abandoned.tmp").apply { writeText("Interrupted export") }
+        val abandoned = listOf(".SheetSet-Backup.tmp", ".SeliaLists-Backup-abandoned.tmp").map { name ->
+            File(directory, name).apply { writeText("Interrupted export") }
+        }
         val ready = CompletableDeferred<Uri>()
         instrumentation.runOnMainSync { viewModel.createSharedBackup { ready.complete(it) } }
         withTimeout(5_000) { ready.await() }
@@ -405,7 +420,7 @@ class ViewModelPersistenceTest {
         assertTrue(recent.take(2).all(File::exists))
         assertTrue(recent.drop(2).none(File::exists))
         assertFalse(expired.exists())
-        assertFalse(abandoned.exists())
+        assertTrue(abandoned.none(File::exists))
     }
 
     private suspend fun awaitState(predicate: (LibraryUiState) -> Boolean): LibraryUiState =

@@ -9,6 +9,8 @@ const val MAX_POINTS_PER_INK = 4_096
 const val MAX_TEXT_LENGTH = 4_000
 internal const val MAX_PAGE_ANNOTATION_WORK = 64_000L
 internal const val MAX_DOCUMENT_ANNOTATION_WORK = 1_000_000L
+internal const val MIN_PLAIN_TEXT_SIZE = 0.008f
+internal const val MAX_PLAIN_TEXT_SIZE = 0.25f
 const val LEGACY_HIGHLIGHTER_OPACITY = 105
 const val DEFAULT_ANNOTATION_OPACITY = 255
 val SUPPORTED_SYMBOL_IDS = setOf(
@@ -25,6 +27,7 @@ class AnnotationLimitException : IllegalArgumentException("Annotation complexity
 private val PageAnnotation.work: Long
     get() = when (this) {
         is TextBoxAnnotation -> 256L + text.length
+        is PlainTextAnnotation -> 256L + text.length
         is InkAnnotation -> 1L + points.size
         is MarkupAnnotation -> 1L + 4L * bounds.size
         is ShapeAnnotation, is SymbolAnnotation -> 1L
@@ -160,8 +163,26 @@ data class TextBoxAnnotation(
 ) : PageAnnotation {
     init {
         requireValidId(id)
-        require(text.isNotBlank() && text.length <= MAX_TEXT_LENGTH) { "Invalid annotation text" }
+        requireValidText(text)
         require(lineHeight in 0.8f..2f) { "Invalid annotation line height" }
+        require(opacity in 0..255) { "Invalid annotation opacity" }
+    }
+}
+
+data class PlainTextAnnotation(
+    override val id: String,
+    val bounds: NormalizedRect,
+    val text: String,
+    val fontSize: Float,
+    val rotationDegrees: Float = 0f,
+    val color: AnnotationColor = AnnotationColor.BLACK,
+    val opacity: Int = DEFAULT_ANNOTATION_OPACITY,
+) : PageAnnotation {
+    init {
+        requireValidId(id)
+        requireValidText(text)
+        require(fontSize in MIN_PLAIN_TEXT_SIZE..MAX_PLAIN_TEXT_SIZE) { "Invalid annotation font size" }
+        require(rotationDegrees in -360f..360f) { "Invalid annotation rotation" }
         require(opacity in 0..255) { "Invalid annotation opacity" }
     }
 }
@@ -201,8 +222,10 @@ data class SymbolAnnotation(
 }
 
 fun SymbolAnnotation.rotated(degrees: Float): SymbolAnnotation = copy(
-    rotationDegrees = ((degrees % 360f) + 360f) % 360f,
+    rotationDegrees = normalizedAnnotationRotation(degrees),
 )
+
+internal fun normalizedAnnotationRotation(degrees: Float): Float = ((degrees % 360f) + 360f) % 360f
 
 data class DocumentAnnotations(
     val pages: Map<Int, List<PageAnnotation>> = emptyMap(),
@@ -291,11 +314,23 @@ private fun requireValidId(id: String) {
     require(id.isNotBlank() && id.length <= MAX_ID_LENGTH) { "Invalid annotation ID" }
 }
 
+private fun requireValidText(text: String) {
+    require(text.isNotBlank() && text.length <= MAX_TEXT_LENGTH) { "Invalid annotation text" }
+}
+
 object AnnotationJson {
-    private const val VERSION = 3
+    private const val BASE_VERSION = 3
+    private const val PLAIN_TEXT_VERSION = 4
 
     fun encode(annotations: DocumentAnnotations): String = JSONObject()
-        .put("version", VERSION)
+        .put(
+            "version",
+            if (annotations.pages.values.any { page -> page.any { it is PlainTextAnnotation } }) {
+                PLAIN_TEXT_VERSION
+            } else {
+                BASE_VERSION
+            },
+        )
         .put(
             "pages",
             JSONObject().apply {
@@ -314,7 +349,7 @@ object AnnotationJson {
     fun decode(raw: String): DocumentAnnotations {
         val root = JSONObject(raw)
         val version = root.exactInt("version")
-        require(version in 1..VERSION) { "Unsupported annotation version" }
+        require(version in 1..PLAIN_TEXT_VERSION) { "Unsupported annotation version" }
         val pagesJson = root.getJSONObject("pages")
         require(pagesJson.keys().asSequence().map(String::toInt).toSet().size == pagesJson.length()) {
             "Duplicate page index"
@@ -330,7 +365,7 @@ object AnnotationJson {
                 val annotation = when (version) {
                     1 -> value.toLegacyInk("legacy-$page-$index")
                     2 -> value.toVersionTwoAnnotation()
-                    else -> value.toVersionThreeAnnotation()
+                    else -> value.toCurrentAnnotation(version)
                 }
                 pageWork += annotation.work
                 documentWork += annotation.work
@@ -376,6 +411,16 @@ object AnnotationJson {
             .put("size", size.name)
             .put("lineHeight", lineHeight.toDouble())
             .put("alignment", alignment.name)
+            .put("color", color.encoded())
+            .put("opacity", opacity)
+
+        is PlainTextAnnotation -> JSONObject()
+            .put("id", id)
+            .put("type", "plain-text")
+            .put("bounds", bounds.toJson())
+            .put("text", text)
+            .put("fontSize", fontSize.toDouble())
+            .put("rotationDegrees", rotationDegrees.toDouble())
             .put("color", color.encoded())
             .put("opacity", opacity)
 
@@ -468,7 +513,7 @@ object AnnotationJson {
         else -> throw IllegalArgumentException("Unsupported annotation type")
     }
 
-    private fun JSONObject.toVersionThreeAnnotation(): PageAnnotation = when (getString("type")) {
+    private fun JSONObject.toCurrentAnnotation(version: Int): PageAnnotation = when (getString("type")) {
         "ink" -> InkAnnotation(
             id = getString("id"),
             kind = InkKind.valueOf(getString("kind")),
@@ -496,6 +541,22 @@ object AnnotationJson {
             color = AnnotationColor.decode(getString("color")),
             opacity = exactInt("opacity"),
         )
+
+        "plain-text" -> {
+            require(version >= PLAIN_TEXT_VERSION) { "Unsupported annotation type" }
+            val bounds = getJSONArray("bounds")
+            require(bounds.length() == 4) { "Invalid annotation bounds" }
+            val text = get("text") as? String ?: throw IllegalArgumentException("Invalid annotation text")
+            PlainTextAnnotation(
+                id = getString("id"),
+                bounds = bounds.toRect(),
+                text = text,
+                fontSize = getDouble("fontSize").toFloat(),
+                rotationDegrees = getDouble("rotationDegrees").toFloat(),
+                color = AnnotationColor.decode(getString("color")),
+                opacity = exactInt("opacity"),
+            )
+        }
 
         "shape" -> ShapeAnnotation(
             id = getString("id"),

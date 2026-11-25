@@ -44,12 +44,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -58,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
@@ -76,8 +79,12 @@ import cz.teply.sheetset.BuildConfig
 import cz.teply.sheetset.R
 import cz.teply.sheetset.settings.AppLanguages
 import cz.teply.sheetset.settings.AppSettings
+import cz.teply.sheetset.settings.DEFAULT_PDF_ZOOM_PERCENT
+import cz.teply.sheetset.settings.MAX_PDF_ZOOM_PERCENT
 import cz.teply.sheetset.settings.PageFit
 import cz.teply.sheetset.settings.ReaderLayout
+import java.text.NumberFormat
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 private enum class DrawerScreen {
@@ -296,6 +303,29 @@ private fun ReaderSettings(
                 R.drawable.ic_straighten_24,
             ) {
                 choice = ReaderChoice.PAGE_FIT
+            }
+        }
+        item {
+            var zoom by rememberSaveable(settings.defaultZoomPercent) { mutableIntStateOf(settings.defaultZoomPercent) }
+            val locale = LocalConfiguration.current.locales[0]
+            val formattedZoom = remember(locale, zoom) {
+                NumberFormat.getPercentInstance(locale).format(zoom / 100.0)
+            }
+            val label = stringResource(R.string.pdf_zoom)
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                Text(label, style = MaterialTheme.typography.titleMedium)
+                Text(formattedZoom)
+                Slider(
+                    value = zoom.toFloat(),
+                    onValueChange = { zoom = it.roundToInt() },
+                    onValueChangeFinished = { onSettings(settings.copy(defaultZoomPercent = zoom)) },
+                    valueRange = DEFAULT_PDF_ZOOM_PERCENT.toFloat()..MAX_PDF_ZOOM_PERCENT.toFloat(),
+                    modifier = Modifier.semantics { contentDescription = label },
+                )
+                TextButton(
+                    onClick = { onSettings(settings.copy(defaultZoomPercent = DEFAULT_PDF_ZOOM_PERCENT)) },
+                    enabled = settings.defaultZoomPercent != DEFAULT_PDF_ZOOM_PERCENT,
+                ) { Text(stringResource(R.string.reset_pdf_zoom)) }
             }
         }
         item { SettingsSectionTitle(R.string.settings_page_turning) }

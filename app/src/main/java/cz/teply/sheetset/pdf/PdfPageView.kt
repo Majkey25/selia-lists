@@ -6,27 +6,25 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
-import android.graphics.pdf.PdfRenderer
 import android.os.Handler
 import android.os.Looper
-import android.os.ParcelFileDescriptor
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import androidx.core.content.res.ResourcesCompat
-import androidx.core.graphics.createBitmap
 import cz.teply.sheetset.R
 import cz.teply.sheetset.settings.AnnotationTextSize
+import cz.teply.sheetset.settings.DEFAULT_PDF_ZOOM_PERCENT
 import cz.teply.sheetset.settings.PageFit
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 enum class ReaderTool {
     VIEW,
@@ -46,7 +44,21 @@ enum class ReaderTool {
 }
 
 class PdfPageView(context: Context) : View(context) {
+    private data class TextGesture(
+        val original: PlainTextAnnotation,
+        val stored: PlainTextAnnotation,
+        val firstId: Int,
+        val secondId: Int,
+        val focusX: Float,
+        val focusY: Float,
+        val span: Float,
+        val angle: Float,
+        val page: RectF,
+        val fingersActive: Boolean = true,
+    )
+
     private var executor = Executors.newSingleThreadExecutor()
+    private var renderer = PdfPageRenderer()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
@@ -58,11 +70,13 @@ class PdfPageView(context: Context) : View(context) {
     private val symbolTypeface = requireNotNull(
         ResourcesCompat.getFont(context, R.font.noto_music_regular),
     )
-    private var viewport = PdfViewport(zoom = 1f, panX = 0f, panY = 0f)
+    private var requestedZoom = DEFAULT_PDF_ZOOM_PERCENT / 100f
+    private var viewport = PdfViewport(zoom = requestedZoom, panX = 0f, panY = 0f)
     private val scaleDetector = ScaleGestureDetector(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (textGesture != null) return false
                 if (activeStylusPointerIds.isNotEmpty() && !multiTouchActive) return false
                 viewport = viewport.scaledAndMoved(
                     factor = detector.scaleFactor,
@@ -74,18 +88,27 @@ class PdfPageView(context: Context) : View(context) {
                 scaleAppliedForEvent = true
                 return true
             }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                if (textGesture != null) return
+                publishZoom()
+                renderPageIfNeeded()
+            }
         },
     )
 
     private var source: File? = null
     private var pageIndex = -1
     private var bitmap: Bitmap? = null
+    private var pageWidth = 0
+    private var pageHeight = 0
     @Volatile
     private var generation = 0
     private var halfPagePart = 0
     private var halfPageMode = false
     private var downX = 0f
     private var downY = 0f
+    private var downPanX = 0f
     private var lastX = 0f
     private var lastY = 0f
     private var activeViewPointerId: Int? = null
@@ -106,6 +129,7 @@ class PdfPageView(context: Context) : View(context) {
     private var lastCentroidX = 0f
     private var lastCentroidY = 0f
     private var drawingOpacity = DEFAULT_ANNOTATION_OPACITY
+    private var textGesture: TextGesture? = null
 
     init {
         isClickable = true
@@ -115,10 +139,7 @@ class PdfPageView(context: Context) : View(context) {
         set(value) {
             if (field == value) return
             field = value
-            activeViewPointerId = null
-            activeEditorPointerId = null
-            eyedropperActive = false
-            resetGesture()
+            cancelPointerGesture()
         }
     var editorSettings = AnnotationEditorSettings.defaults()
     var activeDrawingPreset = editorSettings.presets.first()
@@ -157,18 +178,25 @@ class PdfPageView(context: Context) : View(context) {
             if (field == value) return
             field = value
             if (value == PageFit.WIDTH) applyHalfPagePart() else clampPan()
+            renderPageIfNeeded()
             invalidate()
         }
     var pageTurnTaps = true
     var pageTurnSwipes = true
     var annotations: List<PageAnnotation> = emptyList()
         set(value) {
+            textGesture?.let { gesture ->
+                if (value.firstOrNull { it.id == gesture.stored.id } != gesture.stored) cancelPointerGesture()
+            }
             field = value
             invalidate()
         }
     var selectedAnnotationIds: Set<String> = emptySet()
         set(value) {
             require(value.size <= MAX_ANNOTATIONS_PER_PAGE) { "Too many selected annotations" }
+            textGesture?.let { gesture ->
+                if (value != setOf(gesture.stored.id)) cancelPointerGesture()
+            }
             field = value.toSet()
             invalidate()
         }
@@ -178,33 +206,77 @@ class PdfPageView(context: Context) : View(context) {
     var onPreviousPage: () -> Unit = {}
     var onNextPage: () -> Unit = {}
     var onPageClick: () -> Unit = {}
+    var onZoomChanged: (Float) -> Unit = {}
     var onSelectionChange: (Set<String>) -> Unit = {}
     var onAddAnnotation: (PageAnnotation) -> Unit = {}
     var onUpdateAnnotations: (List<PageAnnotation>) -> Unit = {}
     var onDeleteAnnotations: (Set<String>) -> Unit = {}
     var onSampleColor: (AnnotationColor) -> Unit = {}
-    var onRequestText: (NormalizedRect) -> Unit = {}
+    var onRequestPlainText: (NormalizedPoint) -> Unit = {}
+    internal var onPageBoundsChanged: (RectF?) -> Unit = {}
     var onRequestSymbol: (NormalizedPoint) -> Unit = {}
     var onRequestMarkup: (MarkupKind, NormalizedPoint, NormalizedPoint) -> Unit = { _, _, _ -> }
     var onRenderError: () -> Unit = {}
 
-    fun showPage(file: File, index: Int) {
-        if (source == file && pageIndex == index) return
+    internal fun displayedPageBounds(): RectF? = bitmap?.let(::pageBounds)
+
+    internal fun visiblePageCenter(): NormalizedPoint? {
+        val page = displayedPageBounds() ?: return null
+        val visible = RectF(page)
+        if (!visible.intersect(0f, 0f, width.toFloat(), height.toFloat())) return null
+        return normalizePoint(visible.centerX(), visible.centerY(), PageBounds(page.left, page.top, page.width(), page.height()))
+    }
+
+    internal fun measurePlainText(text: String, anchor: NormalizedPoint, fontSize: Float): NormalizedRect? =
+        if (pageWidth > 0 && pageHeight > 0) {
+            AnnotationRenderer.plainTextBounds(text, anchor, fontSize, pageWidth.toFloat(), pageHeight.toFloat())
+        } else {
+            null
+        }
+
+    fun showPage(file: File, index: Int, zoom: Float = requestedZoom) {
+        if (source == file && pageIndex == index) {
+            if (requestedZoom != zoom) {
+                requestedZoom = zoom
+                resetViewport(zoom)
+                if (pageFit == PageFit.WIDTH) applyHalfPagePart()
+                renderPageIfNeeded()
+                invalidate()
+            }
+            return
+        }
         generation++
         cancelPointerGesture()
         bitmap?.recycle()
         bitmap = null
+        onPageBoundsChanged(null)
+        pageWidth = 0
+        pageHeight = 0
+        requestedZoom = zoom
+        resetViewport(zoom)
         source = file
         pageIndex = index
         renderPage()
+    }
+
+    private fun resetViewport(zoom: Float) {
+        viewport = PdfViewport(zoom = zoom, panX = 0f, panY = 0f)
+        lastTapAt = 0L
+    }
+
+    private fun publishZoom() {
+        if (requestedZoom == viewport.zoom) return
+        requestedZoom = viewport.zoom
+        onZoomChanged(requestedZoom)
     }
 
     fun setHalfPagePart(part: Int, halfPageMode: Boolean = false) {
         require(part in 0..1) { "Invalid half-page part" }
         if (halfPagePart == part && this.halfPageMode == halfPageMode) return
         if (halfPageMode && !this.halfPageMode) {
-            viewport = PdfViewport(zoom = 1f, panX = 0f, panY = 0f)
+            resetViewport(viewport.zoom)
         }
+        lastTapAt = 0L
         this.halfPageMode = halfPageMode
         halfPagePart = part
         if (pageFit == PageFit.WIDTH) {
@@ -226,9 +298,12 @@ class PdfPageView(context: Context) : View(context) {
     override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
         if (width == oldWidth && height == oldHeight) return
+        if (textGesture != null) cancelPointerGesture()
         if (bitmap == null) renderPage()
         else if (halfPageMode && pageFit == PageFit.WIDTH) applyHalfPagePart()
         else clampPan()
+        if (bitmap != null) renderPageIfNeeded()
+        onPageBoundsChanged(displayedPageBounds())
         invalidate()
     }
 
@@ -267,8 +342,17 @@ class PdfPageView(context: Context) : View(context) {
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && textGesture != null) cancelPointerGesture()
         trackStylusDown(event)
         val fingerCount = event.fingerCount()
+        if (textGesture == null && event.actionMasked == MotionEvent.ACTION_POINTER_DOWN && fingerCount == 2) {
+            beginTextGesture(event)
+        }
+        if (textGesture != null) {
+            handleTextGesture(event)
+            trackStylusUp(event)
+            return true
+        }
         scaleAppliedForEvent = false
         trackFingerScale(event, fingerCount)
         val ownerId = activeEditorPointerId
@@ -315,16 +399,99 @@ class PdfPageView(context: Context) : View(context) {
         super.onAttachedToWindow()
         if (executor.isShutdown) {
             executor = Executors.newSingleThreadExecutor()
+            renderer = PdfPageRenderer()
             renderPage()
         }
     }
 
     override fun onDetachedFromWindow() {
+        cancelPointerGesture()
         generation++
-        executor.shutdownNow()
+        val closingRenderer = renderer
+        executor.execute(closingRenderer::close)
+        executor.shutdown()
         bitmap?.recycle()
         bitmap = null
         super.onDetachedFromWindow()
+    }
+
+    private fun beginTextGesture(event: MotionEvent) {
+        if (tool != ReaderTool.SELECT || activeStylusPointerIds.isNotEmpty() || eyedropperActive) return
+        val original = gestureOriginal as? PlainTextAnnotation ?: return
+        if (selectedAnnotationIds != setOf(original.id)) return
+        val page = displayedPageBounds() ?: return
+        val first = activeEditorPointerId?.let(event::findPointerIndex) ?: return
+        val second = event.actionIndex
+        if (first < 0 || first == second) return
+        val dx = event.getX(second) - event.getX(first)
+        val dy = event.getY(second) - event.getY(first)
+        val span = hypot(dx, dy)
+        if (span < 1f) return
+        val preview = gesturePreview[original.id] as? PlainTextAnnotation ?: original
+        resetGesture()
+        activeEditorPointerId = null
+        textGesture = TextGesture(
+            original = preview,
+            stored = original,
+            firstId = event.getPointerId(first),
+            secondId = event.getPointerId(second),
+            focusX = (event.getX(first) + event.getX(second)) / 2f - page.left,
+            focusY = (event.getY(first) + event.getY(second)) / 2f - page.top,
+            span = span,
+            angle = atan2(dy, dx),
+            page = page,
+        )
+        gesturePreview = mapOf(preview.id to preview)
+        val cancel = MotionEvent.obtain(event)
+        try {
+            cancel.action = MotionEvent.ACTION_CANCEL
+            scaleDetector.onTouchEvent(cancel)
+        } finally {
+            cancel.recycle()
+        }
+    }
+
+    private fun handleTextGesture(event: MotionEvent) {
+        val gesture = textGesture ?: return
+        when (event.actionMasked) {
+            MotionEvent.ACTION_CANCEL -> cancelPointerGesture()
+            MotionEvent.ACTION_MOVE -> updateTextGesture(event, gesture)
+            MotionEvent.ACTION_POINTER_UP -> {
+                val liftedId = event.getPointerId(event.actionIndex)
+                if (liftedId == gesture.firstId || liftedId == gesture.secondId) {
+                    updateTextGesture(event, gesture)
+                    textGesture = gesture.copy(fingersActive = false)
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                textGesture = null
+                finishSelectionGesture()
+                resetGesture()
+            }
+        }
+    }
+
+    private fun updateTextGesture(event: MotionEvent, gesture: TextGesture) {
+        if (!gesture.fingersActive) return
+        val first = event.findPointerIndex(gesture.firstId)
+        val second = event.findPointerIndex(gesture.secondId)
+        if (first < 0 || second < 0) return
+        val dx = event.getX(second) - event.getX(first)
+        val dy = event.getY(second) - event.getY(first)
+        val span = hypot(dx, dy)
+        if (span < 1f) return
+        val transformed = gesture.original.transformed(
+            scale = span / gesture.span,
+            rotationDelta = Math.toDegrees((atan2(dy, dx) - gesture.angle).toDouble()).toFloat(),
+            focusX = gesture.focusX,
+            focusY = gesture.focusY,
+            targetFocusX = (event.getX(first) + event.getX(second)) / 2f - gesture.page.left,
+            targetFocusY = (event.getY(first) + event.getY(second)) / 2f - gesture.page.top,
+            pageWidth = gesture.page.width(),
+            pageHeight = gesture.page.height(),
+        )
+        gesturePreview = mapOf(transformed.id to transformed)
+        invalidate()
     }
 
     private fun handleMultiTouch(event: MotionEvent) {
@@ -438,6 +605,7 @@ class PdfPageView(context: Context) : View(context) {
         activeViewPointerId = null
         activeEditorPointerId = null
         multiTouchActive = false
+        textGesture = null
         eyedropperActive = false
         resetGesture()
     }
@@ -511,6 +679,7 @@ class PdfPageView(context: Context) : View(context) {
                 activeViewPointerId = event.getPointerId(index)
                 downX = event.getX(index)
                 downY = event.getY(index)
+                downPanX = viewport.panX
                 lastX = downX
                 lastY = downY
             }
@@ -550,41 +719,41 @@ class PdfPageView(context: Context) : View(context) {
         val dy = y - downY
         if (
             pageTurnSwipes &&
-            viewport.zoom == 1f &&
             abs(dx) > 80f &&
             abs(dx) > abs(dy) &&
-            !canPanHorizontally()
+            (viewport.zoom == 1f || bitmap?.let { page ->
+                val limit = maxPanX(page)
+                if (dx < 0f) downPanX <= -limit + 1f else downPanX >= limit - 1f
+            } == true)
         ) {
             if (dx < 0f) onNextPage() else onPreviousPage()
             return false
         }
         if (hypot(dx, dy) > 24f) return false
+        if (pageTurnTaps && x < width / 3f) {
+            onPreviousPage()
+            return false
+        }
+        if (pageTurnTaps && x > width * 2f / 3f) {
+            onNextPage()
+            return false
+        }
         val now = System.currentTimeMillis()
         if (
             viewport.zoom > 1f &&
             now - lastTapAt < 300 &&
             hypot(x - lastTapX, y - lastTapY) < 60f
         ) {
-            viewport = PdfViewport(zoom = 1f, panX = 0f, panY = 0f)
-            lastTapAt = 0L
+            resetViewport(DEFAULT_PDF_ZOOM_PERCENT / 100f)
+            if (pageFit == PageFit.WIDTH) applyHalfPagePart()
+            publishZoom()
             invalidate()
             return false
         }
         lastTapAt = now
         lastTapX = x
         lastTapY = y
-        if (!pageTurnTaps) return true
-        return when {
-            x < width / 3f -> {
-                onPreviousPage()
-                false
-            }
-            x > width * 2f / 3f -> {
-                onNextPage()
-                false
-            }
-            else -> true
-        }
+        return true
     }
 
     private fun handleEditorTouch(event: MotionEvent): Boolean {
@@ -711,9 +880,7 @@ class PdfPageView(context: Context) : View(context) {
             ReaderTool.HIGHLIGHTER -> addInk(InkKind.HIGHLIGHTER, highlighterWidth)
             ReaderTool.UNDERLINE -> requestMarkup(MarkupKind.UNDERLINE, start, end)
             ReaderTool.STRIKE_THROUGH -> requestMarkup(MarkupKind.STRIKE_THROUGH, start, end)
-            ReaderTool.TEXT_BOX -> if (start != null && end != null) {
-                onRequestText(manualMarkup(start, end).single())
-            }
+            ReaderTool.TEXT_BOX -> end?.let(onRequestPlainText)
             ReaderTool.SYMBOL -> end?.let(onRequestSymbol)
             ReaderTool.LINE -> addShape(ShapeKind.LINE, start, end)
             ReaderTool.ARROW -> addShape(ShapeKind.ARROW, start, end)
@@ -756,14 +923,18 @@ class PdfPageView(context: Context) : View(context) {
         val start = dragStart ?: return
         val page = bitmap ?: return
         val handle = resizeHandle
+        val pageWidth = page.width.toFloat()
+        val pageHeight = page.height.toFloat()
         gesturePreview = if (handle == null) {
             annotations.translateSelection(
                 selectedAnnotationIds,
                 point.x - start.x,
                 point.y - start.y,
+                pageWidth,
+                pageHeight,
             ).filter { it.id in selectedAnnotationIds }.associateBy(PageAnnotation::id)
         } else {
-            mapOf(original.id to original.resized(handle, point, page.width.toFloat(), page.height.toFloat()))
+            mapOf(original.id to original.resized(handle, point, pageWidth, pageHeight))
         }
     }
 
@@ -866,15 +1037,6 @@ class PdfPageView(context: Context) : View(context) {
                 color = annotationColor,
                 opacity = annotationOpacity,
             )
-            ReaderTool.TEXT_BOX -> ShapeAnnotation(
-                id = "preview",
-                kind = ShapeKind.RECTANGLE,
-                start = start,
-                end = end,
-                width = shapeWidth,
-                color = annotationColor,
-                opacity = annotationOpacity,
-            ).resized(start, end)
             ReaderTool.LASSO -> ShapeAnnotation(
                 id = "preview",
                 kind = ShapeKind.RECTANGLE,
@@ -957,11 +1119,6 @@ class PdfPageView(context: Context) : View(context) {
         return maxPanX(page) > 0f || maxPanY(page) > 0f
     }
 
-    private fun canPanHorizontally(): Boolean {
-        val page = bitmap ?: return false
-        return maxPanX(page) > 0f
-    }
-
     private fun clampPan() {
         val page = bitmap ?: return
         viewport = viewport.copy(
@@ -984,58 +1141,58 @@ class PdfPageView(context: Context) : View(context) {
     private fun maxPanY(page: Bitmap): Float =
         max(0f, (page.height * baseScale(page) * viewport.zoom - height) / 2f)
 
+    private fun renderPageIfNeeded() {
+        val current = bitmap ?: return
+        if (width < 1 || height < 1) return
+        val requested = pdfPageRasterSize(pageWidth, pageHeight, width, height, pageFit, viewport.zoom)
+        if (requested.width > current.width || requested.height > current.height) renderPage()
+    }
+
     private fun renderPage() {
         val file = source ?: return
         if (width < 1 || height < 1 || executor.isShutdown) return
         val requestedPage = pageIndex
+        val requestedWidth = width
+        val requestedHeight = height
+        val requestedFit = pageFit
+        val requestedZoom = viewport.zoom
+        val pageRenderer = renderer
         val request = ++generation
         executor.execute {
             if (request != generation) return@execute
             try {
-                val rendered = render(file, requestedPage)
+                val rendered = pageRenderer.render(
+                    file, requestedPage, requestedWidth, requestedHeight, requestedFit, requestedZoom,
+                )
+                if (request != generation) {
+                    rendered.bitmap.recycle()
+                    return@execute
+                }
                 val posted = mainHandler.post {
                     if (request == generation) {
+                        val firstRender = bitmap == null
                         bitmap?.recycle()
-                        bitmap = rendered
-                        viewport = PdfViewport(zoom = 1f, panX = 0f, panY = 0f)
-                        viewport = viewport.copy(
-                            panY = halfPagePan(maxPanY(rendered), halfPagePart),
-                        )
+                        bitmap = rendered.bitmap
+                        pageWidth = rendered.pageWidth
+                        pageHeight = rendered.pageHeight
+                        if (firstRender && pageFit == PageFit.WIDTH) {
+                            applyHalfPagePart()
+                        } else {
+                            clampPan()
+                        }
+                        onPageBoundsChanged(displayedPageBounds())
                         invalidate()
+                        renderPageIfNeeded()
                     } else {
-                        rendered.recycle()
+                        rendered.bitmap.recycle()
                     }
                 }
-                if (!posted) rendered.recycle()
+                if (!posted) rendered.bitmap.recycle()
             } catch (_: Exception) {
                 mainHandler.post { if (request == generation) onRenderError() }
             }
         }
     }
-
-    private fun render(file: File, index: Int): Bitmap = ParcelFileDescriptor
-        .open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-        .use { descriptor ->
-            PdfRenderer(descriptor).use { renderer ->
-                require(index in 0 until renderer.pageCount)
-                renderer.openPage(index).use { page ->
-                    val scale = minOf(
-                        2f,
-                        3_072f / page.width,
-                        3_072f / page.height,
-                        sqrt(12_000_000f / (page.width.toFloat() * page.height)),
-                    )
-                    createBitmap(
-                        (page.width * scale).roundToInt(),
-                        (page.height * scale).roundToInt(),
-                        Bitmap.Config.ARGB_8888,
-                    ).also { result ->
-                        result.eraseColor(Color.WHITE)
-                        page.render(result, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    }
-                }
-            }
-        }
 
     private fun distance(first: NormalizedPoint, second: NormalizedPoint): Float = hypot(
         first.x - second.x,
@@ -1046,6 +1203,7 @@ class PdfPageView(context: Context) : View(context) {
         point: NormalizedPoint,
         radius: Float,
     ): AnnotationHandle? {
+        if (this is PlainTextAnnotation) return null
         val page = bitmap ?: return null
         return resizeHandles(page.width.toFloat(), page.height.toFloat()).minByOrNull { (_, handlePoint) ->
             distance(point, handlePoint)

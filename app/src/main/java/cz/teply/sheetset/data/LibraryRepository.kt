@@ -134,9 +134,8 @@ class LibraryRepository(private val root: File) {
         updateCatalog { it.updateSetlistLabels(setlistId, labels) }
     }
 
-    suspend fun saveReaderPosition(scoreId: String, page: Int, part: Int, viewedAt: Long) {
+    suspend fun saveReaderPosition(scoreId: String, page: Int, part: Int, viewedAt: Long): LibraryCatalog =
         updateCatalog { it.saveReaderPosition(scoreId, page, part, viewedAt) }
-    }
 
     suspend fun renameSetlist(setlistId: String, name: String) {
         updateCatalog { it.renameSetlist(setlistId, name) }
@@ -191,19 +190,18 @@ class LibraryRepository(private val root: File) {
     }
 
     private fun importLocked(source: PdfImport): Score {
-        recoverLibraryBackup(root)
         if (source.mimeType != null && !source.mimeType.equals("application/pdf", ignoreCase = true)) {
             throw PdfImportException("Only PDF files are supported")
         }
         if (source.declaredSize != null && source.declaredSize !in 0..MAX_PDF_BYTES) {
             throw PdfImportException("PDF is larger than 250 MiB")
         }
-        root.mkdirsOrThrow()
-        scoresDirectory.mkdirsOrThrow()
         val id = UUID.randomUUID().toString()
         val temporary = File(scoresDirectory, ".$id.tmp")
         val destination = File(scoresDirectory, "$id.pdf")
         try {
+            val catalog = loadCatalog()
+            scoresDirectory.mkdirsOrThrow()
             source.open().use { input -> copyBounded(input, temporary) }
             val pageCount = validatePdfFile(temporary)
             if (!temporary.renameTo(destination)) {
@@ -216,7 +214,6 @@ class LibraryRepository(private val root: File) {
                 pageCount = pageCount,
                 importedAtEpochMs = System.currentTimeMillis(),
             )
-            val catalog = loadCatalog()
             try {
                 writeCatalog(catalog.copy(scores = catalog.scores + score))
             } catch (error: Exception) {

@@ -12,6 +12,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import cz.teply.sheetset.settings.AnnotationTextSize
 import kotlin.math.atan2
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -51,6 +52,7 @@ object AnnotationRenderer {
             is InkAnnotation -> drawInk(canvas, annotation, page)
             is MarkupAnnotation -> drawMarkup(canvas, annotation, page)
             is TextBoxAnnotation -> drawTextBox(canvas, annotation, page)
+            is PlainTextAnnotation -> drawPlainText(canvas, annotation, page)
             is ShapeAnnotation -> drawShape(canvas, annotation, page)
             is SymbolAnnotation -> drawSymbol(canvas, annotation, page, symbolTypeface)
         }
@@ -170,6 +172,54 @@ object AnnotationRenderer {
         canvas.restore()
     }
 
+    internal fun plainTextBounds(
+        text: String,
+        anchor: NormalizedPoint,
+        fontSize: Float,
+        pageWidth: Float,
+        pageHeight: Float,
+    ): NormalizedRect? {
+        require(pageWidth.isFinite() && pageWidth > 0f && pageHeight.isFinite() && pageHeight > 0f) {
+            "Page dimensions must be positive and finite"
+        }
+        val layoutPageWidth = pageWidth / pageHeight * TEXT_LAYOUT_PAGE_HEIGHT
+        val paint = plainTextPaint(fontSize)
+        val naturalWidth = ceil(Layout.getDesiredWidth(text, paint)).toInt() + 1
+        val layoutWidth = naturalWidth.coerceIn(1, layoutPageWidth.toInt().coerceAtLeast(1))
+        val layout = plainTextLayout(text, paint, layoutWidth)
+        if (layout.height > TEXT_LAYOUT_PAGE_HEIGHT) return null
+        val width = (layoutWidth / layoutPageWidth).coerceAtMost(1f)
+        val height = layout.height / TEXT_LAYOUT_PAGE_HEIGHT
+        val left = anchor.x.coerceAtMost(1f - width)
+        val top = anchor.y.coerceAtMost(1f - height)
+        return NormalizedRect(left, top, (left + width).coerceAtMost(1f), (top + height).coerceAtMost(1f))
+    }
+
+    private fun drawPlainText(canvas: Canvas, annotation: PlainTextAnnotation, page: RectF) {
+        val bounds = annotation.bounds.toRectF(page)
+        val textScale = page.height() / TEXT_LAYOUT_PAGE_HEIGHT
+        val paint = plainTextPaint(annotation.fontSize).apply {
+            color = annotation.color.argb
+            alpha = annotation.opacity
+        }
+        val width = ceil(bounds.width() / textScale).toInt().coerceAtLeast(1)
+        val layout = plainTextLayout(annotation.text, paint, width)
+        canvas.save()
+        canvas.clipRect(page)
+        canvas.rotate(annotation.rotationDegrees, bounds.centerX(), bounds.centerY())
+        canvas.translate(bounds.left, bounds.top)
+        canvas.scale(textScale, textScale)
+        layout.draw(canvas)
+        canvas.restore()
+    }
+
+    private fun plainTextPaint(fontSize: Float): TextPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = fontSize * TEXT_LAYOUT_PAGE_HEIGHT
+    }
+
+    private fun plainTextLayout(text: String, paint: TextPaint, width: Int): StaticLayout =
+        StaticLayout.Builder.obtain(text, 0, text.length, paint, width).build()
+
     private fun drawShape(canvas: Canvas, annotation: ShapeAnnotation, page: RectF) {
         val startX = annotation.start.x(page)
         val startY = annotation.start.y(page)
@@ -233,7 +283,16 @@ object AnnotationRenderer {
             strokeWidth = 2f
             pathEffect = DashPathEffect(floatArrayOf(8f, 6f), 0f)
         }
-        canvas.drawRect(bounds, paint)
+        val handles = if (annotation is PlainTextAnnotation) {
+            canvas.save()
+            canvas.rotate(annotation.rotationDegrees, bounds.centerX(), bounds.centerY())
+            canvas.drawRect(bounds, paint)
+            canvas.restore()
+            emptyList()
+        } else {
+            canvas.drawRect(bounds, paint)
+            selectionHandles(annotation, bounds, page)
+        }
         val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
             color = Color.WHITE
@@ -244,7 +303,7 @@ object AnnotationRenderer {
             strokeWidth = 2f
         }
         val radius = max(6f, min(page.width(), page.height()) * 0.007f)
-        selectionHandles(annotation, bounds, page).forEach { (x, y) ->
+        handles.forEach { (x, y) ->
             canvas.drawCircle(x, y, radius, handlePaint)
             canvas.drawCircle(x, y, radius, handleStroke)
         }
@@ -265,6 +324,7 @@ object AnnotationRenderer {
                 annotation.bounds.maxOf { it.bottom }.normalizedY(page),
             )
             is TextBoxAnnotation -> annotation.bounds.toRectF(page)
+            is PlainTextAnnotation -> return annotation.bounds.toRectF(page)
             is ShapeAnnotation -> shapeBounds(annotation, page)
             is SymbolAnnotation -> annotation.normalizedBounds().toRectF(page)
         }
@@ -278,7 +338,7 @@ object AnnotationRenderer {
         bounds: RectF,
         page: RectF,
     ): List<Pair<Float, Float>> = when (annotation) {
-        is InkAnnotation -> emptyList()
+        is InkAnnotation, is PlainTextAnnotation -> emptyList()
         is ShapeAnnotation -> when (annotation.kind) {
             ShapeKind.LINE, ShapeKind.ARROW -> listOf(
                 annotation.start.x(page) to annotation.start.y(page),

@@ -6,10 +6,26 @@ import cz.teply.sheetset.pdf.AnnotationEditorSettingsJson
 import cz.teply.sheetset.pdf.DrawingPresetKind
 
 private const val EDITOR_JSON_KEY = "annotation_editor_json"
+private const val DEFAULT_ZOOM_PERCENT_KEY = "default_zoom_percent"
+private const val CUSTOM_ACCENT_RGB_KEY = "custom_accent_rgb"
 
 class SettingsStore(private val preferences: SharedPreferences) {
     fun load(): AppSettings {
         val defaults = AppSettings()
+        val defaultZoomPercent = try {
+            preferences.getInt(DEFAULT_ZOOM_PERCENT_KEY, defaults.defaultZoomPercent)
+                .takeIf { it in DEFAULT_PDF_ZOOM_PERCENT..MAX_PDF_ZOOM_PERCENT }
+                ?: defaults.defaultZoomPercent
+        } catch (_: ClassCastException) {
+            defaults.defaultZoomPercent
+        }
+        val customAccentRgb = try {
+            preferences.getInt(CUSTOM_ACCENT_RGB_KEY, defaults.customAccentRgb)
+                .takeIf { it in 0..MAX_ACCENT_RGB }
+                ?: defaults.customAccentRgb
+        } catch (_: ClassCastException) {
+            defaults.customAccentRgb
+        }
         val editorRaw = preferences.getString(EDITOR_JSON_KEY, null)
         val legacyEditorUi = editorRaw?.let { raw ->
             runCatching { AnnotationEditorSettingsJson.isLegacy(raw) }.getOrDefault(false)
@@ -27,6 +43,7 @@ class SettingsStore(private val preferences: SharedPreferences) {
         return AppSettings(
             keepScreenAwake = preferences.getBoolean("keep_screen_awake", defaults.keepScreenAwake),
             pageFit = preferences.enum("page_fit", defaults.pageFit),
+            defaultZoomPercent = defaultZoomPercent,
             pageTurnTaps = preferences.getBoolean("page_turn_taps", defaults.pageTurnTaps),
             pageTurnSwipes = preferences.getBoolean("page_turn_swipes", defaults.pageTurnSwipes),
             autoHideControls = preferences.getBoolean("auto_hide_controls", defaults.autoHideControls),
@@ -38,6 +55,7 @@ class SettingsStore(private val preferences: SharedPreferences) {
             themeMode = preferences.enum("theme_mode", defaults.themeMode),
             themePalette = preferences.enum("theme_palette", defaults.themePalette),
             editor = editor,
+            customAccentRgb = customAccentRgb,
         )
     }
 
@@ -45,6 +63,7 @@ class SettingsStore(private val preferences: SharedPreferences) {
         preferences.edit()
             .putBoolean("keep_screen_awake", settings.keepScreenAwake)
             .putString("page_fit", settings.pageFit.name)
+            .putInt(DEFAULT_ZOOM_PERCENT_KEY, settings.defaultZoomPercent)
             .putBoolean("page_turn_taps", settings.pageTurnTaps)
             .putBoolean("page_turn_swipes", settings.pageTurnSwipes)
             .putBoolean("auto_hide_controls", settings.autoHideControls)
@@ -55,6 +74,7 @@ class SettingsStore(private val preferences: SharedPreferences) {
             .putString("reader_layout", settings.readerLayout.name)
             .putString("theme_mode", settings.themeMode.name)
             .putString("theme_palette", settings.themePalette.name)
+            .putInt(CUSTOM_ACCENT_RGB_KEY, settings.customAccentRgb)
             .putString(EDITOR_JSON_KEY, AnnotationEditorSettingsJson.encode(settings.editor))
             .apply()
     }

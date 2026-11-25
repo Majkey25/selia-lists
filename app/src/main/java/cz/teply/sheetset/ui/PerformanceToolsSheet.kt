@@ -47,6 +47,8 @@ internal fun PerformanceToolsSheet(
     reader: ReaderUiState,
     settings: AppSettings,
     windowLayout: WindowLayout,
+    zoomPercent: Int,
+    onResetZoom: () -> Unit,
     onSettings: (AppSettings) -> Unit,
     onJump: (Int) -> Unit,
     onAddBookmark: (String) -> Unit,
@@ -140,6 +142,18 @@ internal fun PerformanceToolsSheet(
                     }
                     LayoutRow(R.string.fit_width, settings.pageFit == PageFit.WIDTH) {
                         onSettings(settings.copy(pageFit = PageFit.WIDTH))
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    SectionTitle(R.string.pdf_zoom)
+                    ListItem(headlineContent = {
+                        Text(stringResource(R.string.pdf_zoom_status, zoomPercent, settings.defaultZoomPercent))
+                    })
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        TextButton(
+                            onClick = { onSettings(settings.copy(defaultZoomPercent = zoomPercent)) },
+                            enabled = zoomPercent != settings.defaultZoomPercent,
+                        ) { Text(stringResource(R.string.save_pdf_zoom)) }
+                        TextButton(onClick = onResetZoom) { Text(stringResource(R.string.reset_pdf_zoom)) }
                     }
                 }
                 ReaderPanel.GESTURE -> {

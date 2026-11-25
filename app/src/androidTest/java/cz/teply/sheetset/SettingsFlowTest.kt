@@ -18,11 +18,15 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -35,6 +39,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
@@ -134,6 +139,45 @@ class SettingsFlowTest {
             deviceDark = true
         }
         composeRule.runOnIdle { assertEquals(Color(0xFF91C6FF), appliedPrimary) }
+    }
+
+    @Test
+    fun appearanceSavesCustomAccentAndKeepsItWhenChoosingPreset() {
+        var settings by mutableStateOf(AppSettings())
+        var appliedPrimary = Color.Unspecified
+        composeRule.setContent {
+            SheetSetTheme(isDarkTheme(settings.themeMode), settings.themePalette, settings.customAccentRgb) {
+                val primary = MaterialTheme.colorScheme.primary
+                SideEffect { appliedPrimary = primary }
+                SheetSetApp(
+                    LibraryUiState(settings = settings),
+                    SheetSetActions(updateSettings = { settings = it }),
+                )
+            }
+        }
+
+        openMenuPage("Appearance")
+        scrollToText("Custom")
+        composeRule.onNodeWithText("Custom").assertIsNotSelected().performClick()
+        val accent = composeRule.onNode(hasSetTextAction())
+        accent.performTextReplacement("#225588F")
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+        accent.performTextReplacement("#225588")
+        composeRule.runOnIdle { assertEquals(ThemePalette.MONOCHROME, settings.themePalette) }
+        composeRule.onNodeWithText("Save").assertIsEnabled().performClick()
+
+        composeRule.onNodeWithText("Custom").assertIsSelected()
+        composeRule.runOnIdle {
+            assertEquals(0x225588, settings.customAccentRgb)
+            assertEquals(Color(0xFF225588), appliedPrimary)
+        }
+        scrollToText("Rose")
+        composeRule.onNodeWithText("Rose").performClick().assertIsSelected()
+        scrollToText("Custom")
+        composeRule.onNodeWithText("Custom").performClick()
+        accent.assertTextContains("#225588")
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.runOnIdle { assertEquals(ThemePalette.ROSE, settings.themePalette) }
     }
 
     @Test
@@ -332,6 +376,30 @@ class SettingsFlowTest {
         composeRule.onNodeWithText("Čeština").performClick()
 
         composeRule.runOnIdle { assertEquals("cs", language) }
+    }
+
+    @Test
+    fun createBackupSuggestsTheSeliaListsZipName() {
+        setSettingsContent()
+        openMenuPage("Backup and restore")
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var request: Intent? = null
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_CREATE_DOCUMENT) return null
+                request = intent
+                return Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try {
+            composeRule.onNodeWithText("Create backup").performClick()
+            composeRule.waitForIdle()
+            assertEquals("SeliaLists-Backup.zip", request?.getStringExtra(Intent.EXTRA_TITLE))
+            assertEquals("application/zip", request?.type)
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
     }
 
     @Test

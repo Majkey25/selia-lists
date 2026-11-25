@@ -9,13 +9,16 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cz.teply.sheetset.settings.DEFAULT_CUSTOM_ACCENT_RGB
 import cz.teply.sheetset.settings.ThemeMode
 import cz.teply.sheetset.settings.ThemePalette
 
@@ -111,12 +114,24 @@ private val PaletteColors = mapOf(
         LightColors.tinted(0xFF6543A0, 0xFFF4EFFB, 0xFFFBF7FF) to
             DarkColors.tinted(0xFFC9AEFF, 0xFF191324, 0xFF241B32)
         ),
+    ThemePalette.LAGOON to (
+        LightColors.tinted(0xFF176D72, 0xFFEAF7F6, 0xFFF4FCFC) to
+            DarkColors.tinted(0xFF75D8D1, 0xFF0C1B1C, 0xFF132A2B)
+        ),
+    ThemePalette.ROSE to (
+        LightColors.tinted(0xFF96365E, 0xFFFAEDF3, 0xFFFFF7FA) to
+            DarkColors.tinted(0xFFFFA8CA, 0xFF25131C, 0xFF321D28)
+        ),
+    ThemePalette.SLATE to (
+        LightColors.tinted(0xFF3E5870, 0xFFEAF0F5, 0xFFF5F8FB) to
+            DarkColors.tinted(0xFFB5C9DF, 0xFF131C26, 0xFF202A35)
+        ),
 )
 
-private fun ColorScheme.tinted(accentValue: Long, backgroundValue: Long, surfaceValue: Long): ColorScheme {
-    val accent = Color(accentValue)
-    val canvas = Color(backgroundValue)
-    val panel = Color(surfaceValue)
+private fun ColorScheme.tinted(accent: Long, canvas: Long, panel: Long): ColorScheme =
+    tinted(Color(accent), Color(canvas), Color(panel))
+
+private fun ColorScheme.tinted(accent: Color, canvas: Color, panel: Color): ColorScheme {
     val selection = lerp(panel, accent, 0.16f)
     return copy(
         primary = accent,
@@ -142,9 +157,47 @@ private fun ColorScheme.tinted(accentValue: Long, backgroundValue: Long, surface
     )
 }
 
-internal fun themeColors(palette: ThemePalette, dark: Boolean): ColorScheme {
+internal fun themeColors(
+    palette: ThemePalette,
+    dark: Boolean,
+    customAccentRgb: Int = DEFAULT_CUSTOM_ACCENT_RGB,
+): ColorScheme {
+    if (palette == ThemePalette.CUSTOM) {
+        val base = if (dark) DarkColors else LightColors
+        val seed = Color(customAccentRgb or 0xFF000000.toInt())
+        val canvas = lerp(base.background, seed, 0.06f)
+        val panel = lerp(base.surface, seed, 0.04f)
+        val accent = readableAccent(seed, canvas, panel, dark)
+        val foreground = if (contrast(accent, Color.White) >= 4.5f) Color.White else Color.Black
+        return base.tinted(accent, canvas, panel).copy(
+            onPrimary = foreground,
+            onSecondary = foreground,
+            onTertiary = foreground,
+        )
+    }
     val colors = PaletteColors[palette]
     return if (dark) colors?.second ?: DarkColors else colors?.first ?: LightColors
+}
+
+private fun readableAccent(seed: Color, canvas: Color, panel: Color, dark: Boolean): Color {
+    fun isReadable(accent: Color): Boolean =
+        contrast(accent, canvas) >= 4.5f && contrast(accent, lerp(panel, accent, 0.16f)) >= 4.5f
+
+    if (isReadable(seed)) return seed
+    var readable = if (dark) Color.White else Color.Black
+    var unreadable = seed
+    repeat(10) {
+        val tone = lerp(readable, unreadable, 0.5f)
+        if (isReadable(tone)) readable = tone else unreadable = tone
+    }
+    return readable
+}
+
+private fun contrast(first: Color, second: Color): Float {
+    val firstLuminance = first.luminance()
+    val secondLuminance = second.luminance()
+    return (maxOf(firstLuminance, secondLuminance) + 0.05f) /
+        (minOf(firstLuminance, secondLuminance) + 0.05f)
 }
 
 @Composable
@@ -205,10 +258,13 @@ private val SheetTypography = Typography(
 fun SheetSetTheme(
     darkTheme: Boolean = false,
     palette: ThemePalette = ThemePalette.MONOCHROME,
+    customAccentRgb: Int = DEFAULT_CUSTOM_ACCENT_RGB,
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(
-        colorScheme = themeColors(palette, darkTheme),
+        colorScheme = remember(palette, darkTheme, customAccentRgb) {
+            themeColors(palette, darkTheme, customAccentRgb)
+        },
         typography = SheetTypography,
         shapes = MonochromeShapes,
         content = content,

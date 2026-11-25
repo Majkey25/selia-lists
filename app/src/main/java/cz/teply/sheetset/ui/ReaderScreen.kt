@@ -1,5 +1,6 @@
 package cz.teply.sheetset.ui
 
+import android.graphics.RectF
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -75,11 +78,12 @@ import cz.teply.sheetset.pdf.AnnotationToolGroup
 import cz.teply.sheetset.pdf.DrawingPreset
 import cz.teply.sheetset.pdf.InkAnnotation
 import cz.teply.sheetset.pdf.InkKind
+import cz.teply.sheetset.pdf.MAX_TEXT_LENGTH
 import cz.teply.sheetset.pdf.MarkupAnnotation
 import cz.teply.sheetset.pdf.NormalizedPoint
-import cz.teply.sheetset.pdf.NormalizedRect
 import cz.teply.sheetset.pdf.PageAnnotation
 import cz.teply.sheetset.pdf.PdfPageView
+import cz.teply.sheetset.pdf.PlainTextAnnotation
 import cz.teply.sheetset.pdf.ReaderTool
 import cz.teply.sheetset.pdf.ShapeAnnotation
 import cz.teply.sheetset.pdf.SymbolAnnotation
@@ -87,12 +91,15 @@ import cz.teply.sheetset.pdf.TextBoxAnnotation
 import cz.teply.sheetset.pdf.canAppendAnnotations
 import cz.teply.sheetset.pdf.AnnotationLimitException
 import cz.teply.sheetset.pdf.duplicateSelection
+import cz.teply.sheetset.pdf.fitsPage
+import cz.teply.sheetset.pdf.fittedAtPageEdges
 import cz.teply.sheetset.pdf.manualMarkup
 import cz.teply.sheetset.pdf.annotationWidthLevel
 import cz.teply.sheetset.pdf.highlighterWidthLevel
 import cz.teply.sheetset.pdf.normalizedAnnotationWidth
 import cz.teply.sheetset.pdf.normalizedHighlighterWidth
 import cz.teply.sheetset.settings.AppSettings
+import cz.teply.sheetset.settings.DEFAULT_PDF_ZOOM_PERCENT
 import cz.teply.sheetset.settings.ReaderLayout
 import java.util.UUID
 import kotlinx.coroutines.delay
@@ -100,10 +107,18 @@ import kotlin.math.roundToInt
 
 internal const val PDF_PAGE_TEST_TAG = "pdf-page"
 
-private val textBoundsSaver = listSaver<NormalizedRect?, Float>(
-    save = { bounds -> bounds?.let { listOf(it.left, it.top, it.right, it.bottom) }.orEmpty() },
+private const val DEFAULT_PLAIN_TEXT_SIZE = 0.036f
+
+private data class PlainTextDraft(val anchor: NormalizedPoint, val text: String = "", val editingId: String? = null)
+
+private val plainTextDraftSaver = listSaver<PlainTextDraft?, Any>(
+    save = { draft -> draft?.let { listOf(it.anchor.x, it.anchor.y, it.text, it.editingId.orEmpty()) }.orEmpty() },
     restore = { values ->
-        if (values.isEmpty()) null else NormalizedRect(values[0], values[1], values[2], values[3])
+        if (values.isEmpty()) null else PlainTextDraft(
+            NormalizedPoint(values[0] as Float, values[1] as Float),
+            values[2] as String,
+            (values[3] as String).ifEmpty { null },
+        )
     },
 )
 
@@ -126,6 +141,27 @@ fun ReaderScreen(
     windowLayout: WindowLayout,
     actions: SheetSetActions,
 ) {
+    var controlsVisible by rememberSaveable { mutableStateOf(true) }
+    var zoom by rememberSaveable { mutableFloatStateOf(settings.defaultZoomPercent / 100f) }
+    key(reader.score.id) {
+        ReaderScoreScreen(
+            reader, settings, windowLayout, actions,
+            controlsVisible, { controlsVisible = it }, zoom, { zoom = it },
+        )
+    }
+}
+
+@Composable
+private fun ReaderScoreScreen(
+    reader: ReaderUiState,
+    settings: AppSettings,
+    windowLayout: WindowLayout,
+    actions: SheetSetActions,
+    controlsVisible: Boolean,
+    onControlsVisible: (Boolean) -> Unit,
+    zoom: Float,
+    onZoomChange: (Float) -> Unit,
+) {
     val initialSelection = settings.editor.resolveVisibleSelection(
         settings.defaultTool.requestedReaderTool(),
     )
@@ -133,7 +169,7 @@ fun ReaderScreen(
     val editor = editorState.current
     var tool by remember(reader.score.id) { mutableStateOf(ReaderTool.VIEW) }
     var lastEditorTool by remember(reader.score.id) { mutableStateOf(initialSelection.tool) }
-    var controlsVisible by remember { mutableStateOf(true) }
+    var editingToolbarHidden by rememberSaveable(reader.score.id) { mutableStateOf(false) }
     var autoHideRequest by remember { mutableIntStateOf(0) }
     var selectedAnnotationIds by remember(reader.score.id, reader.pageIndex) {
         mutableStateOf(emptySet<String>())
@@ -146,8 +182,8 @@ fun ReaderScreen(
     var objectOpacity by remember(reader.score.id) { mutableIntStateOf(255) }
     var objectWidth by remember(reader.score.id) { mutableIntStateOf(2) }
     var straightLine by remember(reader.score.id) { mutableStateOf(false) }
-    var textBounds by key(reader.score.id, reader.pageIndex) {
-        rememberSaveable(stateSaver = textBoundsSaver) { mutableStateOf<NormalizedRect?>(null) }
+    var plainTextDraft by key(reader.score.id, reader.pageIndex) {
+        rememberSaveable(stateSaver = plainTextDraftSaver) { mutableStateOf<PlainTextDraft?>(null) }
     }
     var editingTextId by key(reader.score.id, reader.pageIndex) {
         rememberSaveable { mutableStateOf<String?>(null) }
@@ -155,12 +191,15 @@ fun ReaderScreen(
     var symbolPoint by remember { mutableStateOf<NormalizedPoint?>(null) }
     var selectedSymbolId by remember { mutableStateOf("sharp") }
     var colorPanelOpen by remember { mutableStateOf(false) }
+    var colorPreview by remember { mutableStateOf<Pair<AnnotationColor, Int>?>(null) }
     var pageView by remember { mutableStateOf<PdfPageView?>(null) }
+    var pageBounds by remember { mutableStateOf<RectF?>(null) }
     var readerPanel by rememberSaveable(reader.score.id) { mutableStateOf<ReaderPanel?>(null) }
     var history by remember(reader.score.id, reader.pageIndex) {
         mutableStateOf(AnnotationHistory(reader.annotations.pages[reader.pageIndex].orEmpty()))
     }
     val editingText = history.annotations.firstOrNull { it.id == editingTextId } as? TextBoxAnnotation
+    val editingPlainText = history.annotations.firstOrNull { it.id == plainTextDraft?.editingId } as? PlainTextAnnotation
     val sliderInteractionSource = remember { MutableInteractionSource() }
     val sliderDragging by sliderInteractionSource.collectIsDraggedAsState()
     val sliderPressed by sliderInteractionSource.collectIsPressedAsState()
@@ -169,7 +208,7 @@ fun ReaderScreen(
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/pdf"),
     ) { uri -> uri?.let(actions.exportPdf) }
-    val effectiveLayout = if (tool != ReaderTool.VIEW) {
+    val effectiveLayout = if (tool != ReaderTool.VIEW || plainTextDraft != null) {
         ReaderLayout.SINGLE
     } else {
         effectiveReaderLayout(settings.readerLayout, windowLayout != WindowLayout.COMPACT)
@@ -181,6 +220,20 @@ fun ReaderScreen(
         ?: if (group == AnnotationToolGroup.DRAW) activePreset.color else objectColor
     val currentOpacity = selectedAnnotations.firstOrNull()?.annotationOpacity()
         ?: if (group == AnnotationToolGroup.DRAW) activePreset.opacity else objectOpacity
+    val displayedAnnotations = remember(history.annotations, selectedAnnotationIds, colorPreview) {
+        val preview = colorPreview
+        if (preview == null || selectedAnnotationIds.isEmpty()) {
+            history.annotations
+        } else {
+            history.annotations.map { annotation ->
+                if (annotation.id in selectedAnnotationIds) {
+                    annotation.withAppearance(preview.first, preview.second)
+                } else {
+                    annotation
+                }
+            }
+        }
+    }
     val currentWidth = selectedAnnotation?.toolbarWidth()
         ?: if (group == AnnotationToolGroup.DRAW) activePreset.width else objectWidth
     val pageDescription = stringResource(
@@ -190,6 +243,7 @@ fun ReaderScreen(
     )
     val actionFailed = stringResource(R.string.action_failed)
     val annotationLimit = stringResource(R.string.annotation_limit_reached)
+    val plainTextTooLong = stringResource(R.string.plain_text_too_long)
 
     LaunchedEffect(settings.editor) {
         editorState.replace(settings.editor)
@@ -203,12 +257,12 @@ fun ReaderScreen(
         selectedAnnotationIds = emptySet()
     }
     LaunchedEffect(reader.score.id) {
-        readerFocusRequester.requestFocus()
+        if (plainTextDraft == null) readerFocusRequester.requestFocus()
     }
     LaunchedEffect(autoHideRequest, settings.autoHideControls, sliderDragging, sliderPressed) {
         if (autoHideRequest > 0 && settings.autoHideControls && !sliderDragging && !sliderPressed) {
             delay(1_500)
-            if (tool == ReaderTool.VIEW && controlsVisible) controlsVisible = false
+            if (tool == ReaderTool.VIEW && controlsVisible) onControlsVisible(false)
         }
     }
 
@@ -232,6 +286,46 @@ fun ReaderScreen(
             return false
         }
         return updateHistory { history.add(annotation) }
+    }
+
+    fun commitPlainText(): Boolean {
+        val draft = plainTextDraft ?: return true
+        val text = draft.text.trim()
+        if (text.isEmpty()) {
+            plainTextDraft = null
+            return true
+        }
+        val fontSize = editingPlainText?.fontSize ?: DEFAULT_PLAIN_TEXT_SIZE
+        val page = pageView ?: return false
+        val visiblePage = page.displayedPageBounds() ?: return false
+        val bounds = page.measurePlainText(text, draft.anchor, fontSize)
+        if (bounds == null) {
+            Toast.makeText(platformView.context, plainTextTooLong, Toast.LENGTH_LONG).show()
+            return false
+        }
+        val measured = editingPlainText?.copy(text = text, bounds = bounds) ?: PlainTextAnnotation(
+            id = UUID.randomUUID().toString(),
+            bounds = bounds,
+            text = text,
+            fontSize = fontSize,
+            color = objectColor,
+            opacity = objectOpacity,
+        )
+        if (!measured.fitsPage(visiblePage.width(), visiblePage.height())) {
+            Toast.makeText(platformView.context, plainTextTooLong, Toast.LENGTH_LONG).show()
+            return false
+        }
+        val annotation = measured.fittedAtPageEdges(visiblePage.width(), visiblePage.height())
+        val saved = if (editingPlainText == null) addAnnotation(annotation)
+            else updateHistory { history.update(annotation) }
+        if (saved) {
+            plainTextDraft = null
+            tool = ReaderTool.SELECT
+            lastEditorTool = ReaderTool.SELECT
+            group = AnnotationToolGroup.OBJECTS
+            selectedAnnotationIds = setOf(annotation.id)
+        }
+        return saved
     }
 
     fun updateEditor(transform: (AnnotationEditorSettings) -> AnnotationEditorSettings) {
@@ -314,11 +408,26 @@ fun ReaderScreen(
         selectedAnnotationIds = emptySet()
     }
 
+    fun beginPlainText(anchor: NormalizedPoint) {
+        pageBounds = pageView?.displayedPageBounds()
+        selectedAnnotationIds = emptySet()
+        plainTextDraft = PlainTextDraft(anchor)
+    }
+
+    val toggleControls: () -> Unit = {
+        if (tool == ReaderTool.VIEW) {
+            if (!controlsVisible && settings.autoHideControls) autoHideRequest++
+            onControlsVisible(!controlsVisible)
+        }
+    }
+
     Box(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)
             .focusRequester(readerFocusRequester).focusable().onPreviewKeyEvent { event ->
             val direction = pedalDirection(event.nativeKeyEvent.keyCode, repeatCount = 0)
-            if (direction == null || textBounds != null || readerPanel != null || colorPanelOpen || symbolPoint != null) {
+            if (direction == null || editingText != null || plainTextDraft != null ||
+                readerPanel != null || colorPanelOpen || symbolPoint != null
+            ) {
                 false
             } else {
                 if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
@@ -336,10 +445,9 @@ fun ReaderScreen(
                 reader = reader,
                 settings = settings,
                 actions = actions,
-                onToggleControls = {
-                    controlsVisible = !controlsVisible
-                    if (controlsVisible && settings.autoHideControls) autoHideRequest++
-                },
+                zoom = zoom,
+                onZoomChange = onZoomChange,
+                onToggleControls = toggleControls,
             )
         } else {
             AndroidView(
@@ -353,7 +461,8 @@ fun ReaderScreen(
                 view.tool = tool
                 view.editorSettings = editor
                 view.activeDrawingPreset = activePreset
-                view.annotations = history.annotations
+                view.annotations = if (editingPlainText == null) displayedAnnotations
+                    else displayedAnnotations.filterNot { it.id == editingPlainText.id }
                 view.selectedAnnotationIds = selectedAnnotationIds
                 view.annotationColor = currentColor
                 view.annotationOpacity = currentOpacity
@@ -377,12 +486,8 @@ fun ReaderScreen(
                 view.onNextPage = {
                     actions.nextPage(effectiveLayout)
                 }
-                view.onPageClick = {
-                    if (tool == ReaderTool.VIEW) {
-                        controlsVisible = !controlsVisible
-                        if (controlsVisible && settings.autoHideControls) autoHideRequest++
-                    }
-                }
+                view.onPageClick = toggleControls
+                view.onZoomChanged = onZoomChange
                 view.onSelectionChange = { selectedAnnotationIds = it }
                 view.onAddAnnotation = { addAnnotation(it) }
                 view.onUpdateAnnotations = { updateHistory { history.commit(it) } }
@@ -390,10 +495,8 @@ fun ReaderScreen(
                     selectedAnnotationIds = selectedAnnotationIds - ids
                     updateHistory { history.commit(history.annotations.filterNot { it.id in ids }) }
                 }
-                view.onRequestText = { bounds ->
-                    editingTextId = null
-                    textBounds = bounds
-                }
+                view.onPageBoundsChanged = { pageBounds = it }
+                view.onRequestPlainText = ::beginPlainText
                 view.onRequestSymbol = { point ->
                     selectedSymbolId = "sharp"
                     symbolPoint = point
@@ -415,12 +518,12 @@ fun ReaderScreen(
                 view.onRenderError = {
                     Toast.makeText(view.context, actionFailed, Toast.LENGTH_SHORT).show()
                 }
-                view.showPage(reader.file, reader.pageIndex)
+                view.showPage(reader.file, reader.pageIndex, zoom)
                 },
             )
         }
         AnimatedVisibility(
-            visible = controlsVisible,
+            visible = controlsVisible && plainTextDraft == null,
             modifier = Modifier.align(Alignment.TopCenter),
             enter = fadeIn(tween(140)),
             exit = fadeOut(tween(140)),
@@ -428,6 +531,10 @@ fun ReaderScreen(
             ReaderTopBar(
                 title = reader.score.title,
                 onClose = actions.closeReader,
+                editingToolbarHidden = editingToolbarHidden,
+                onToggleEditingToolbar = if (tool == ReaderTool.VIEW) null else {
+                    { editingToolbarHidden = !editingToolbarHidden }
+                },
                 onExport = {
                     exportLauncher.launch(
                         reader.score.title.replace(Regex("[\\/:*?\"<>|]"), "_")
@@ -437,7 +544,8 @@ fun ReaderScreen(
             )
         }
         AnimatedVisibility(
-            visible = controlsVisible,
+            visible = controlsVisible && plainTextDraft == null &&
+                (tool == ReaderTool.VIEW || (!editingToolbarHidden && !colorPanelOpen)),
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = fadeIn(tween(140)),
             exit = fadeOut(tween(140)),
@@ -461,7 +569,8 @@ fun ReaderScreen(
                     } else {
                         AnnotationToolGroup.OBJECTS
                     }
-                    controlsVisible = true
+                    onControlsVisible(true)
+                    editingToolbarHidden = false
                 }
             } else {
                 val previousEnabled = reader.pageIndex > 0 || reader.scoreIndex > 0
@@ -479,6 +588,7 @@ fun ReaderScreen(
                         canRedo = history.canRedo,
                         previousEnabled = previousEnabled,
                         nextEnabled = nextEnabled,
+                        canInsertText = pageBounds != null,
                         expanded = windowLayout == WindowLayout.EXPANDED,
                         straightLine = straightLine,
                         width = currentWidth,
@@ -497,7 +607,10 @@ fun ReaderScreen(
                         activePresetId = resolved.preset.id
                         switchTool(resolved.tool)
                     },
-                    onTool = { switchTool(it) },
+                    onTool = {
+                        if (it == ReaderTool.TEXT_BOX) pageView?.visiblePageCenter()?.let(::beginPlainText)
+                        else switchTool(it)
+                    },
                     onPreset = { presetId ->
                         activePresetId = presetId
                         group = AnnotationToolGroup.DRAW
@@ -508,9 +621,16 @@ fun ReaderScreen(
                     onEyedropper = { pageView?.startEyedropper() },
                     onStraightLine = { straightLine = !straightLine },
                     onEditText = {
-                        val text = selectedAnnotation as? TextBoxAnnotation
-                        editingTextId = text?.id
-                        textBounds = text?.bounds
+                        when (val text = selectedAnnotation) {
+                            is TextBoxAnnotation -> editingTextId = text.id
+                            is PlainTextAnnotation -> {
+                                pageBounds = pageView?.displayedPageBounds()
+                                plainTextDraft = PlainTextDraft(
+                                    NormalizedPoint(text.bounds.left, text.bounds.top), text.text, text.id,
+                                )
+                            }
+                            else -> Unit
+                        }
                     },
                     onDuplicate = duplicate@{
                         val before = history.annotations
@@ -523,7 +643,12 @@ fun ReaderScreen(
                             ).show()
                             return@duplicate
                         }
-                        val duplicated = before.duplicateSelection(selectedAnnotationIds) {
+                        val page = pageView?.displayedPageBounds()
+                        val duplicated = before.duplicateSelection(
+                            selectedAnnotationIds,
+                            page?.width() ?: 1f,
+                            page?.height() ?: 1f,
+                        ) {
                             UUID.randomUUID().toString()
                         }
                         if (updateHistory { history.commit(duplicated) }) {
@@ -549,7 +674,7 @@ fun ReaderScreen(
                     onDone = {
                         selectedAnnotationIds = emptySet()
                         tool = ReaderTool.VIEW
-                        controlsVisible = true
+                        onControlsVisible(true)
                     },
                     onPrevious = {
                         selectedAnnotationIds = emptySet()
@@ -562,6 +687,20 @@ fun ReaderScreen(
                 )
             }
         }
+        val draft = plainTextDraft
+        if (draft != null) {
+            pageBounds?.let { bounds ->
+                InlinePdfTextEditor(
+                    page = bounds,
+                    anchor = draft.anchor,
+                    text = draft.text,
+                    fontSize = editingPlainText?.fontSize ?: DEFAULT_PLAIN_TEXT_SIZE,
+                    color = Color((editingPlainText?.color ?: objectColor).argb),
+                    onText = { plainTextDraft = draft.copy(text = it.take(MAX_TEXT_LENGTH)) },
+                    onCommit = ::commitPlainText,
+                )
+            }
+        }
     }
 
     readerPanel?.let { panel ->
@@ -570,6 +709,11 @@ fun ReaderScreen(
             reader = reader,
             settings = settings,
             windowLayout = windowLayout,
+            zoomPercent = (zoom * 100).roundToInt(),
+            onResetZoom = {
+                onZoomChange(DEFAULT_PDF_ZOOM_PERCENT / 100f)
+                actions.updateSettings(settings.copy(defaultZoomPercent = DEFAULT_PDF_ZOOM_PERCENT))
+            },
             onSettings = actions.updateSettings,
             onJump = actions.jumpToPage,
             onAddBookmark = actions.addBookmark,
@@ -591,45 +735,42 @@ fun ReaderScreen(
             opacity = currentOpacity,
             quickColors = editor.quickColors,
             recentColors = editor.recentColors,
-            onDismiss = { colorPanelOpen = false },
             onEyedropper = {
                 colorPanelOpen = false
+                colorPreview = null
                 pageView?.startEyedropper()
             },
-            onConfirm = { nextColor, nextOpacity ->
-                applyAppearance(
-                    nextColor,
-                    nextOpacity,
-                    addRecent = nextColor !in editor.quickColors,
-                )
+            onPreview = { nextColor, nextOpacity ->
+                colorPreview = if (nextColor == currentColor && nextOpacity == currentOpacity) {
+                    null
+                } else {
+                    nextColor to nextOpacity
+                }
+            },
+            onClose = { nextColor, nextOpacity ->
+                if (nextColor != currentColor || nextOpacity != currentOpacity) {
+                    applyAppearance(nextColor, nextOpacity, addRecent = nextColor != currentColor)
+                }
+                colorPreview = null
                 colorPanelOpen = false
             },
         )
     }
 
     key(reader.score.id, reader.pageIndex) {
-        textBounds?.let { bounds ->
+        if (editingText != null) {
             TextAnnotationDialog(
                 initial = editingText,
-                bounds = bounds,
+                bounds = editingText.bounds,
                 defaultSize = settings.textSize,
                 defaultColor = objectColor,
                 defaultOpacity = objectOpacity,
                 quickColors = editor.quickColors,
                 recentColors = editor.recentColors,
-                onDismiss = {
-                    textBounds = null
-                    editingTextId = null
-                },
+                onDismiss = { editingTextId = null },
                 onConfirm = { annotation ->
-                    val saved = if (editingText == null) {
-                        addAnnotation(annotation)
-                    } else {
-                        updateHistory { history.update(annotation) }
-                    }
-                    if (saved) {
+                    if (updateHistory { history.update(annotation) }) {
                         saveRecentColor(annotation.color)
-                        textBounds = null
                         editingTextId = null
                     }
                 },
@@ -665,6 +806,8 @@ private fun TwoPageReader(
     reader: ReaderUiState,
     settings: AppSettings,
     actions: SheetSetActions,
+    zoom: Float,
+    onZoomChange: (Float) -> Unit,
     onToggleControls: () -> Unit,
 ) {
     val actionFailed = stringResource(R.string.action_failed)
@@ -690,10 +833,11 @@ private fun TwoPageReader(
                     view.onPreviousPage = { actions.previousPage(ReaderLayout.TWO_PAGE) }
                     view.onNextPage = { actions.nextPage(ReaderLayout.TWO_PAGE) }
                     view.onPageClick = onToggleControls
+                    view.onZoomChanged = onZoomChange
                     view.onRenderError = {
                         Toast.makeText(view.context, actionFailed, Toast.LENGTH_SHORT).show()
                     }
-                    view.showPage(reader.file, pageIndex)
+                    view.showPage(reader.file, pageIndex, zoom)
                 },
             )
         }
@@ -733,7 +877,13 @@ private fun readerPositionText(reader: ReaderUiState, layout: ReaderLayout): Str
 }
 
 @Composable
-private fun ReaderTopBar(title: String, onClose: () -> Unit, onExport: () -> Unit) {
+private fun ReaderTopBar(
+    title: String,
+    onClose: () -> Unit,
+    editingToolbarHidden: Boolean,
+    onToggleEditingToolbar: (() -> Unit)?,
+    onExport: () -> Unit,
+) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -750,6 +900,18 @@ private fun ReaderTopBar(title: String, onClose: () -> Unit, onExport: () -> Uni
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (onToggleEditingToolbar != null) {
+                val toolbarLabel = if (editingToolbarHidden) R.string.show_editing_tools else R.string.hide_editing_tools
+                TextButton(onClick = onToggleEditingToolbar) {
+                    Icon(
+                        painterResource(if (editingToolbarHidden) R.drawable.ic_arrow_up_24 else R.drawable.ic_arrow_down_24),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(toolbarLabel))
+                }
+            }
             ReaderControl(stringResource(R.string.export), R.drawable.ic_download_24, onClick = onExport)
         }
     }
@@ -916,6 +1078,7 @@ private fun PageAnnotation.annotationColor(): AnnotationColor = when (this) {
     is InkAnnotation -> color
     is MarkupAnnotation -> color
     is TextBoxAnnotation -> color
+    is PlainTextAnnotation -> color
     is ShapeAnnotation -> color
     is SymbolAnnotation -> color
 }
@@ -924,6 +1087,7 @@ private fun PageAnnotation.annotationOpacity(): Int = when (this) {
     is InkAnnotation -> opacity
     is MarkupAnnotation -> opacity
     is TextBoxAnnotation -> opacity
+    is PlainTextAnnotation -> opacity
     is ShapeAnnotation -> opacity
     is SymbolAnnotation -> opacity
 }
@@ -933,6 +1097,7 @@ private fun PageAnnotation.withAppearance(color: AnnotationColor, opacity: Int):
         is InkAnnotation -> copy(color = color, opacity = opacity)
         is MarkupAnnotation -> copy(color = color, opacity = opacity)
         is TextBoxAnnotation -> copy(color = color, opacity = opacity)
+        is PlainTextAnnotation -> copy(color = color, opacity = opacity)
         is ShapeAnnotation -> copy(color = color, opacity = opacity)
         is SymbolAnnotation -> copy(color = color, opacity = opacity)
     }
@@ -945,7 +1110,7 @@ private fun PageAnnotation.toolbarWidth(): Int = when (this) {
     }
     is ShapeAnnotation -> width.annotationWidthLevel()
     is SymbolAnnotation -> (size * 50f).roundToInt().coerceIn(1, 10)
-    is MarkupAnnotation, is TextBoxAnnotation -> 2
+    is MarkupAnnotation, is TextBoxAnnotation, is PlainTextAnnotation -> 2
 }
 
 private fun PageAnnotation.withToolbarWidth(width: Int): PageAnnotation = when (this) {
@@ -958,5 +1123,5 @@ private fun PageAnnotation.withToolbarWidth(width: Int): PageAnnotation = when (
     )
     is ShapeAnnotation -> copy(width = width.normalizedAnnotationWidth())
     is SymbolAnnotation -> copy(size = (width / 50f).coerceIn(0.01f, 0.5f))
-    is MarkupAnnotation, is TextBoxAnnotation -> this
+    is MarkupAnnotation, is TextBoxAnnotation, is PlainTextAnnotation -> this
 }

@@ -9,16 +9,28 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,8 +39,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import cz.teply.sheetset.R
 import cz.teply.sheetset.settings.AppSettings
 import cz.teply.sheetset.settings.ThemeMode
@@ -42,6 +56,7 @@ internal fun AppearanceSettings(
     onBack: () -> Unit,
     onSettings: (AppSettings) -> Unit,
 ) {
+    var editingCustom by rememberSaveable { mutableStateOf(false) }
     SettingsPage(R.string.appearance, onBack) {
         item { SettingsSectionTitle(R.string.theme_mode) }
         item {
@@ -93,17 +108,27 @@ internal fun AppearanceSettings(
             ) {
                 ThemePalette.entries.forEach { palette ->
                     val selected = settings.themePalette == palette
-                    ThemeOption(palette, selected) {
-                        if (!selected) onSettings(settings.copy(themePalette = palette))
+                    ThemeOption(palette, selected, settings.customAccentRgb) {
+                        if (palette == ThemePalette.CUSTOM) {
+                            editingCustom = true
+                        } else if (!selected) {
+                            onSettings(settings.copy(themePalette = palette))
+                        }
                     }
                 }
             }
         }
     }
+    if (editingCustom) {
+        CustomAccentDialog(settings.customAccentRgb, onDismiss = { editingCustom = false }) { rgb ->
+            onSettings(settings.copy(themePalette = ThemePalette.CUSTOM, customAccentRgb = rgb))
+            editingCustom = false
+        }
+    }
 }
 
 @Composable
-private fun ThemeOption(palette: ThemePalette, selected: Boolean, onClick: () -> Unit) {
+private fun ThemeOption(palette: ThemePalette, selected: Boolean, customAccentRgb: Int, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val label = when (palette) {
         ThemePalette.MONOCHROME -> R.string.theme_monochrome
@@ -111,6 +136,10 @@ private fun ThemeOption(palette: ThemePalette, selected: Boolean, onClick: () ->
         ThemePalette.GROVE -> R.string.theme_grove
         ThemePalette.EMBER -> R.string.theme_ember
         ThemePalette.IRIS -> R.string.theme_iris
+        ThemePalette.LAGOON -> R.string.theme_lagoon
+        ThemePalette.ROSE -> R.string.theme_rose
+        ThemePalette.SLATE -> R.string.theme_slate
+        ThemePalette.CUSTOM -> R.string.theme_custom
     }
     Row(
         Modifier.fillMaxWidth().clip(PreviewShape)
@@ -121,10 +150,7 @@ private fun ThemeOption(palette: ThemePalette, selected: Boolean, onClick: () ->
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            ThemePreview(themeColors(palette, dark = false))
-            ThemePreview(themeColors(palette, dark = true))
-        }
+        ThemePreviewPair(palette, customAccentRgb)
         Text(
             stringResource(label),
             modifier = Modifier.weight(1f),
@@ -132,6 +158,56 @@ private fun ThemeOption(palette: ThemePalette, selected: Boolean, onClick: () ->
             color = if (selected) colors.onSecondaryContainer else colors.onSurface,
         )
         RadioButton(selected = selected, onClick = null)
+    }
+}
+
+@Composable
+private fun CustomAccentDialog(initialRgb: Int, onDismiss: () -> Unit, onSave: (Int) -> Unit) {
+    var hex by rememberSaveable { mutableStateOf("#${initialRgb.toString(16).uppercase().padStart(6, '0')}") }
+    val digits = hex.trim().removePrefix("#")
+    val rgb = digits.takeIf { value -> value.length == 6 && value.all { it.digitToIntOrNull(16) != null } }
+        ?.toIntOrNull(16)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.imePadding(),
+        properties = DialogProperties(decorFitsSystemWindows = false),
+        title = { Text(stringResource(R.string.custom_color)) },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                ThemePreviewPair(ThemePalette.CUSTOM, rgb ?: initialRgb)
+                OutlinedTextField(
+                    value = hex,
+                    onValueChange = { hex = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.theme_accent_hex)) },
+                    supportingText = { Text(stringResource(R.string.theme_accent_hex_hint)) },
+                    singleLine = true,
+                    isError = rgb == null,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = rgb != null, onClick = { rgb?.let(onSave) }) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun ThemePreviewPair(palette: ThemePalette, customAccentRgb: Int) {
+    val light = remember(palette, customAccentRgb) {
+        themeColors(palette, dark = false, customAccentRgb = customAccentRgb)
+    }
+    val dark = remember(palette, customAccentRgb) {
+        themeColors(palette, dark = true, customAccentRgb = customAccentRgb)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        ThemePreview(light)
+        ThemePreview(dark)
     }
 }
 

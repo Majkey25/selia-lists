@@ -93,11 +93,10 @@ class EditorSettingsStateTest {
             .performSemanticsAction(SemanticsActions.SetProgress) { it(1.7f) }
         composeRule.onNodeWithText("Center").performScrollTo().performClick()
         composeRule.onNodeWithContentDescription("Color").performScrollTo().performClick()
-        composeRule.onNodeWithContentDescription("Red").performClick()
         composeRule.onNodeWithContentDescription("Opacity")
             .performScrollTo()
             .performSemanticsAction(SemanticsActions.SetProgress) { it(128f) }
-        composeRule.onNodeWithText("Apply").performClick()
+        composeRule.onNodeWithContentDescription("Red").performScrollTo().performClick()
 
         restoration.emulateSavedInstanceStateRestore()
 

@@ -115,6 +115,22 @@ class ErrorAndNavigationStateTest {
     }
 
     @Test
+    fun backExitsLibrarySearchBeforeReturningToRoot() {
+        val other = Score("score-2", "Prelude", "score-2.pdf", 1, 2L)
+        showApp(scores = listOf(score, other))
+        composeRule.onNodeWithContentDescription("Search PDFs").performClick()
+        composeRule.onNode(hasSetTextAction()).performTextInput("Moonlight")
+        Espresso.closeSoftKeyboard()
+        composeRule.onAllNodesWithText(other.title).assertCountEquals(0)
+
+        Espresso.pressBack()
+
+        composeRule.onNodeWithContentDescription("Search PDFs").assertIsDisplayed()
+        composeRule.onNodeWithText(other.title).assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals(0, rootBackCount) }
+    }
+
+    @Test
     fun librarySortAndScrollSurviveReader() {
         val scores = List(60) { index ->
             Score(
