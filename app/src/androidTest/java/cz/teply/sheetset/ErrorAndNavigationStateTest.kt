@@ -186,7 +186,7 @@ class ErrorAndNavigationStateTest {
                 SheetSetApp(
                     state = state,
                     actions = SheetSetActions(
-                        openScore = { selected ->
+                        openScore = { selected, _ ->
                             state = state.copy(
                                 reader = ReaderUiState(
                                     score = selected,

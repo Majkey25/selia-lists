@@ -52,8 +52,8 @@ import cz.teply.sheetset.data.Score
 @Composable
 fun LibraryScreen(
     scores: List<Score>,
-    onOpen: (Score) -> Unit,
-    onOpenBookmark: (Score, Int) -> Unit,
+    onOpen: (Score, List<String>) -> Unit,
+    onOpenBookmark: (Score, Int, List<String>) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
     onLabels: (String, List<String>) -> Unit,
@@ -72,6 +72,7 @@ fun LibraryScreen(
     val visibleResults = remember(scores, query, sort, direction) {
         queryScores(LibraryCatalog(scores = scores), query, sort, direction)
     }
+    val visibleScoreIds = remember(visibleResults) { visibleResults.map { it.score.id }.distinct() }
 
     LaunchedEffect(searching) {
         if (!searching) query = ""
@@ -186,7 +187,7 @@ fun LibraryScreen(
                             score = result.score,
                             index = index,
                             expanded = menuScoreId == result.score.id,
-                            onOpen = onOpen,
+                            onOpen = { onOpen(it, visibleScoreIds) },
                             onMore = { menuScoreId = result.score.id },
                             onDismissMenu = { menuScoreId = null },
                             onRename = { menuScoreId = null; renameScoreId = result.score.id },
@@ -195,7 +196,7 @@ fun LibraryScreen(
                         )
                         is LibraryResult.BookmarkResult -> BookmarkRow(
                             result = result,
-                            onOpen = { onOpenBookmark(result.score, result.bookmark.pageIndex) },
+                            onOpen = { onOpenBookmark(result.score, result.bookmark.pageIndex, visibleScoreIds) },
                         )
                     }
                     HorizontalDivider()

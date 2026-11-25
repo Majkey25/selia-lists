@@ -272,7 +272,7 @@ class ReaderWorkflowRegressionTest {
                                 state = state.copy(settings = it)
                             },
                             closeReader = { state = state.copy(reader = null) },
-                            openScore = { score ->
+                            openScore = { score, _ ->
                                 state = state.copy(
                                     reader = readers.first { it.score.id == score.id },
                                     settings = store.load(),

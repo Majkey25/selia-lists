@@ -281,7 +281,7 @@ class SheetSetFlowTest {
             SheetSetTheme {
                 SheetSetApp(
                     LibraryUiState(catalog = LibraryCatalog(scores = listOf(score))),
-                    SheetSetActions(openScoreAt = { _, page -> openedPage = page }),
+                    SheetSetActions(openScoreAt = { _, page, _ -> openedPage = page }),
                 )
             }
         }
@@ -361,7 +361,7 @@ class SheetSetFlowTest {
             SheetSetTheme {
                 SheetSetApp(
                     LibraryUiState(catalog = LibraryCatalog(scores = listOf(score))),
-                    SheetSetActions(openScore = { opened = true }),
+                    SheetSetActions(openScore = { _, _ -> opened = true }),
                 )
             }
         }

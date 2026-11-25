@@ -72,8 +72,8 @@ import kotlinx.coroutines.launch
 data class SheetSetActions(
     val importPdfs: (List<Uri>) -> Unit = {},
     val createSetlist: (String) -> Unit = {},
-    val openScore: (Score) -> Unit = {},
-    val openScoreAt: (Score, Int) -> Unit = { _, _ -> },
+    val openScore: (Score, List<String>) -> Unit = { _, _ -> },
+    val openScoreAt: (Score, Int, List<String>) -> Unit = { _, _, _ -> },
     val openSetlistScore: (String, Int) -> Unit = { _, _ -> },
     val closeReader: () -> Unit = {},
     val previousPage: (ReaderLayout) -> Unit = {},

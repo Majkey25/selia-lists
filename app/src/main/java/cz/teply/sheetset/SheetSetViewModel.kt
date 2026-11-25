@@ -125,17 +125,17 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
         mutableState.update { it.copy(settings = settings) }
     }
 
-    fun openScore(score: Score) {
+    fun openScore(score: Score, scoreIds: List<String> = listOf(score.id)) {
         openReader(
-            listOf(score.id),
-            scoreIndex = 0,
+            scoreIds,
+            scoreIndex = scoreIds.indexOf(score.id),
             pageIndex = score.lastPageIndex,
             pagePart = score.lastPagePart,
         )
     }
 
-    fun openScoreAt(score: Score, pageIndex: Int) {
-        openReader(listOf(score.id), scoreIndex = 0, pageIndex = pageIndex, pagePart = 0)
+    fun openScoreAt(score: Score, pageIndex: Int, scoreIds: List<String> = listOf(score.id)) {
+        openReader(scoreIds, scoreIndex = scoreIds.indexOf(score.id), pageIndex = pageIndex, pagePart = 0)
     }
 
     fun jumpToPage(pageIndex: Int) {
@@ -463,7 +463,11 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
                         part = pagePart,
                         viewedAt = System.currentTimeMillis(),
                     )
-                    val savedScore = catalog.scores.first { it.id == score.id }
+                    val scores = catalog.scores.associateBy(Score::id)
+                    val savedScore = scores.getValue(score.id)
+                    // A deletion can finish while this reader is opening.
+                    val remainingScoreIds = scoreIds.filter(scores::containsKey)
+                    val remainingScoreIndex = scoreIds.subList(0, scoreIndex).count(scores::containsKey)
                     val pendingAnnotations = annotationSaves.pendingAnnotations(score.id)
                     mutableState.update {
                         it.copy(
@@ -472,8 +476,8 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
                             reader = ReaderUiState(
                                 score = savedScore,
                                 file = file,
-                                scoreIds = scoreIds,
-                                scoreIndex = scoreIndex,
+                                scoreIds = remainingScoreIds,
+                                scoreIndex = remainingScoreIndex,
                                 pageIndex = pageIndex,
                                 pagePart = pagePart,
                                 annotations = it.reader?.takeIf { reader -> reader.score.id == score.id }?.annotations

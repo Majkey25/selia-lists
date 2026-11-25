@@ -30,8 +30,8 @@ class LibraryStateRestorationTest {
             SheetSetTheme {
                 LibraryScreen(
                     scores = listOf(score),
-                    onOpen = {},
-                    onOpenBookmark = { _, _ -> },
+                    onOpen = { _, _ -> },
+                    onOpenBookmark = { _, _, _ -> },
                     onRename = { id, title -> renamed = id to title },
                     onDelete = {},
                     onLabels = { _, _ -> },
@@ -61,8 +61,8 @@ class LibraryStateRestorationTest {
             SheetSetTheme {
                 LibraryScreen(
                     scores = listOf(score),
-                    onOpen = {},
-                    onOpenBookmark = { _, _ -> },
+                    onOpen = { _, _ -> },
+                    onOpenBookmark = { _, _, _ -> },
                     onRename = { _, _ -> },
                     onDelete = {},
                     onLabels = { id, labels -> savedLabels = id to labels },
