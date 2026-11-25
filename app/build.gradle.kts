@@ -25,8 +25,8 @@ android {
         applicationId = "com.majkeylab.sheetset"
         minSdk = 28
         targetSdk = 36
-        versionCode = 30
-        versionName = "0.5.0-alpha.25"
+        versionCode = 31
+        versionName = "0.5.0-alpha.26"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "EXTERNAL_DONATIONS_ENABLED", (distributionChannel == "github").toString())
     }

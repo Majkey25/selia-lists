@@ -44,6 +44,7 @@
     <string name="choose_pdfs">Vyberte PDF z knižnice.</string>
     <string name="import_first">Najprv importujte PDF na karte PDF.</string>
     <string name="action_failed">Akciu sa nepodarilo dokončiť.</string>
+    <string name="backup_needs_update">Táto záloha používa novší formát. Aktualizujte SeliaLists a skúste to znova.</string>
     <string name="annotation_limit_reached">Táto zmena prekračuje limit zložitosti anotácií. Doterajšie anotácie zostali zachované.</string>
     <string name="pdf_export_limit_reached">Toto PDF prekračuje bezpečnú veľkosť exportu pre dostupnú pamäť. Exportujte menší dokument. Originál zostal zachovaný.</string>
     <string name="close">Zavrieť</string>

@@ -9,6 +9,7 @@ import cz.teply.sheetset.pdf.AnnotationJson
 import cz.teply.sheetset.pdf.DocumentAnnotations
 import cz.teply.sheetset.pdf.NormalizedPoint
 import cz.teply.sheetset.pdf.NormalizedRect
+import cz.teply.sheetset.pdf.PlainTextAnnotation
 import cz.teply.sheetset.pdf.TextBoxAnnotation
 import cz.teply.sheetset.pdf.MAX_TEXT_LENGTH
 import cz.teply.sheetset.pdf.SymbolAnnotation
@@ -143,6 +144,13 @@ class LibraryBackupTest {
                             color = AnnotationColor.RED,
                             opacity = 180,
                         ),
+                        PlainTextAnnotation(
+                            id = "plain-text",
+                            bounds = NormalizedRect(0.4f, 0.6f, 0.7f, 0.7f),
+                            text = "Rehearsal",
+                            fontSize = 0.04f,
+                            rotationDegrees = 25f,
+                        ),
                     ),
                 ),
             )
@@ -179,7 +187,6 @@ class LibraryBackupTest {
             assertEquals(source.load(), restored.load())
             assertEquals(annotations, restored.loadAnnotations(score.id))
             assertEquals(expectedEditor, metadata.settings.editor)
-            assertTrue(restored.loadAnnotations(score.id).pages.getValue(score.pageCount - 1).single() is SymbolAnnotation)
             assertEquals(settings, metadata.settings)
             assertEquals("cs", metadata.languageTag)
             assertEquals(score.pageCount, restored.load().scores.single().pageCount)
@@ -255,13 +262,43 @@ class LibraryBackupTest {
     }
 
     @Test
+    fun newerBackupFormatsLeaveExistingLibraryUntouched() = runBlocking {
+        val repository = LibraryRepository(restoreRoot)
+        repository.createSetlist("Keep")
+        val original = repository.load()
+        val source = LibraryRepository(sourceRoot)
+        val pdf = createPdf(pages = 1)
+        try {
+            val score = source.importPdf(PdfImport("Score.pdf", "application/pdf", pdf.length(), pdf::inputStream))
+            source.saveAnnotations(score.id, DocumentAnnotations())
+            val archive = ByteArrayOutputStream()
+            source.createBackup(archive, AppSettings(), null)
+
+            val newerBackups = listOf(
+                rewriteBackupJson(archive.toByteArray(), "manifest.json") { it.put("version", 3) },
+                rewriteBackupJson(archive.toByteArray(), "annotations/${score.id}.json") { it.put("version", 5) },
+            )
+            newerBackups.forEach { newerBackup ->
+                assertThrows(NewerBackupVersionException::class.java) {
+                    runBlocking { repository.restoreBackup(newerBackup.inputStream()) }
+                }
+                assertEquals(original, LibraryRepository(restoreRoot).load())
+            }
+            repository.restoreBackup(archive.toByteArray().inputStream())
+            assertEquals(source.load(), LibraryRepository(restoreRoot).load())
+        } finally {
+            pdf.delete()
+        }
+    }
+
+    @Test
     fun fractionalManifestVersionCannotReplaceExistingLibrary() = runBlocking {
         val repository = LibraryRepository(restoreRoot)
         repository.createSetlist("Keep")
         val original = repository.load()
         val validArchive = ByteArrayOutputStream()
         LibraryRepository(sourceRoot).createBackup(validArchive, AppSettings(), null)
-        val archive = rewriteBackupManifest(validArchive.toByteArray()) { it.put("version", 2.5) }
+        val archive = rewriteBackupJson(validArchive.toByteArray(), "manifest.json") { it.put("version", 2.5) }
 
         assertThrows(BackupException::class.java) {
             runBlocking { repository.restoreBackup(ByteArrayInputStream(archive)) }
@@ -279,7 +316,7 @@ class LibraryBackupTest {
         LibraryRepository(sourceRoot).createBackup(validArchive, AppSettings(), null)
 
         for (value in listOf(99, 501, 150.5, "150", JSONObject.NULL)) {
-            val archive = rewriteBackupManifest(validArchive.toByteArray()) {
+            val archive = rewriteBackupJson(validArchive.toByteArray(), "manifest.json") {
                 it.getJSONObject("settings").put("defaultZoomPercent", value)
             }
 
@@ -470,7 +507,7 @@ class LibraryBackupTest {
             )
 
             val repository = LibraryRepository(restoreRoot)
-            val versionTwoWithoutZoom = rewriteBackupManifest(archive.toByteArray()) {
+            val versionTwoWithoutZoom = rewriteBackupJson(archive.toByteArray(), "manifest.json") {
                 it.getJSONObject("settings").remove("defaultZoomPercent")
             }
             val versionTwoSettings = requireNotNull(
@@ -479,7 +516,7 @@ class LibraryBackupTest {
             assertEquals(DEFAULT_PDF_ZOOM_PERCENT, versionTwoSettings.defaultZoomPercent)
             assertEquals(ReaderLayout.HALF, versionTwoSettings.readerLayout)
 
-            val versionOne = rewriteBackupManifest(versionTwoWithoutZoom) { manifest ->
+            val versionOne = rewriteBackupJson(versionTwoWithoutZoom, "manifest.json") { manifest ->
                 manifest.put("version", 1)
                 val settings = manifest.getJSONObject("settings")
                 settings.remove("readerLayout")
@@ -502,19 +539,20 @@ class LibraryBackupTest {
         }
     }
 
-    private fun rewriteBackupManifest(
+    private fun rewriteBackupJson(
         archive: ByteArray,
-        editManifest: (JSONObject) -> Unit,
+        entryName: String,
+        edit: (JSONObject) -> Unit,
     ): ByteArray = ByteArrayOutputStream().also { output ->
         ZipInputStream(ByteArrayInputStream(archive)).use { input ->
             ZipOutputStream(output).use { zip ->
                 while (true) {
                     val entry = input.nextEntry ?: break
                     zip.putNextEntry(ZipEntry(entry.name))
-                    if (entry.name == "manifest.json") {
-                        val manifest = JSONObject(input.readBytes().toString(Charsets.UTF_8))
-                        editManifest(manifest)
-                        zip.write(manifest.toString().toByteArray(Charsets.UTF_8))
+                    if (entry.name == entryName) {
+                        val payload = JSONObject(input.readBytes().toString(Charsets.UTF_8))
+                        edit(payload)
+                        zip.write(payload.toString().toByteArray(Charsets.UTF_8))
                     } else {
                         input.copyTo(zip)
                     }

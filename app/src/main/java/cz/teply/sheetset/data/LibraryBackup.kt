@@ -2,6 +2,7 @@ package cz.teply.sheetset.data
 
 import cz.teply.sheetset.pdf.AnnotationJson
 import cz.teply.sheetset.pdf.AnnotationEditorSettingsJson
+import cz.teply.sheetset.pdf.NewerAnnotationVersionException
 import cz.teply.sheetset.settings.AnnotationTextSize
 import cz.teply.sheetset.settings.AppLanguages
 import cz.teply.sheetset.settings.AppSettings
@@ -30,7 +31,10 @@ internal const val MAX_BACKUP_BYTES = 1L * 1024L * 1024L * 1024L
 internal const val MAX_BACKUP_ENTRIES = 20_000
 internal const val MAX_JSON_BYTES = 16L * 1024L * 1024L
 
-class BackupException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class BackupException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
+internal class NewerBackupVersionException(cause: Throwable? = null) :
+    BackupException("Backup uses a newer format", cause)
 
 data class BackupMetadata(
     val settings: AppSettings,
@@ -198,9 +202,10 @@ private fun validateStaging(staging: File): BackupMetadata {
     }
     val manifest = JSONObject(manifestFile.readText(Charsets.UTF_8))
     val version = manifest.requiredInt("version")
-    if (manifest.optString("format") != BACKUP_FORMAT || version !in 1..BACKUP_VERSION) {
+    if (manifest.optString("format") != BACKUP_FORMAT || version < 1) {
         throw BackupException("Unsupported backup format")
     }
+    if (version > BACKUP_VERSION) throw NewerBackupVersionException()
     val languageTag = if (manifest.isNull("languageTag")) {
         null
     } else {
@@ -227,7 +232,11 @@ private fun validateStaging(staging: File): BackupMetadata {
         if (file.name != "$scoreId.json" || score == null) {
             throw BackupException("Backup contains orphan annotations")
         }
-        validateAnnotationPages(file.readText(Charsets.UTF_8), score.pageCount)
+        try {
+            validateAnnotationPages(file.readText(Charsets.UTF_8), score.pageCount)
+        } catch (error: NewerAnnotationVersionException) {
+            throw NewerBackupVersionException(error)
+        }
     }
     return BackupMetadata(settings, languageTag)
 }

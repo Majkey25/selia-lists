@@ -10,6 +10,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import cz.teply.sheetset.data.BACKUP_FILE_BASENAME
 import cz.teply.sheetset.data.LibraryRepository
+import cz.teply.sheetset.data.NewerBackupVersionException
 import cz.teply.sheetset.data.Bookmark
 import cz.teply.sheetset.data.PdfImport
 import cz.teply.sheetset.data.Score
@@ -381,6 +382,8 @@ class SheetSetViewModel(application: Application) : AndroidViewModel(application
                 }
             } catch (error: CancellationException) {
                 throw error
+            } catch (_: NewerBackupVersionException) {
+                mutableState.update { it.copy(loading = false, error = R.string.backup_needs_update) }
             } catch (_: Exception) {
                 mutableState.update { it.copy(loading = false, error = R.string.action_failed) }
             } finally {

@@ -318,6 +318,8 @@ private fun requireValidText(text: String) {
     require(text.isNotBlank() && text.length <= MAX_TEXT_LENGTH) { "Invalid annotation text" }
 }
 
+internal class NewerAnnotationVersionException : IllegalArgumentException("Unsupported annotation version")
+
 object AnnotationJson {
     private const val BASE_VERSION = 3
     private const val PLAIN_TEXT_VERSION = 4
@@ -349,7 +351,8 @@ object AnnotationJson {
     fun decode(raw: String): DocumentAnnotations {
         val root = JSONObject(raw)
         val version = root.exactInt("version")
-        require(version in 1..PLAIN_TEXT_VERSION) { "Unsupported annotation version" }
+        if (version > PLAIN_TEXT_VERSION) throw NewerAnnotationVersionException()
+        require(version >= 1) { "Unsupported annotation version" }
         val pagesJson = root.getJSONObject("pages")
         require(pagesJson.keys().asSequence().map(String::toInt).toSet().size == pagesJson.length()) {
             "Duplicate page index"

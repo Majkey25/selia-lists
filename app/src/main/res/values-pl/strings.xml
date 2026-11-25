@@ -44,6 +44,7 @@
     <string name="choose_pdfs">Wybierz pliki PDF z biblioteki.</string>
     <string name="import_first">Najpierw zaimportuj pliki na karcie PDF.</string>
     <string name="action_failed">Nie udało się ukończyć działania.</string>
+    <string name="backup_needs_update">Ta kopia zapasowa używa nowszego formatu. Zaktualizuj SeliaLists i spróbuj ponownie.</string>
     <string name="annotation_limit_reached">Ta zmiana przekracza limit złożoności adnotacji. Dotychczasowe adnotacje zostały zachowane.</string>
     <string name="pdf_export_limit_reached">Ten PDF przekracza bezpieczny rozmiar eksportu dla dostępnej pamięci. Wyeksportuj mniejszy dokument. Oryginał został zachowany.</string>
     <string name="close">Zamknij</string>
